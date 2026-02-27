@@ -1,0 +1,48 @@
+name: CI / Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Build (release)
+        run: cargo build --release --manifest-path=rust-clipboard-uploader/Cargo.toml
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload binary
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            rust-clipboard-uploader/target/release/rust-clipboard-uploader
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload as artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-clipboard-uploader-${{ github.ref_name }}
+          path: rust-clipboard-uploader/target/release/rust-clipboard-uploader
