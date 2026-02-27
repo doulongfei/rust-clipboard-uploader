@@ -23,7 +23,7 @@ jobs:
           override: true
 
       - name: Build (release)
-        run: cargo build --release --manifest-path=rust-clipboard-uploader/Cargo.toml
+        run: cargo build --release
 
       - name: Create Release
         id: create_release
@@ -37,7 +37,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            rust-clipboard-uploader/target/release/rust-clipboard-uploader
+            target/release/rust-clipboard-uploader
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -45,4 +45,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-clipboard-uploader-${{ github.ref_name }}
-          path: rust-clipboard-uploader/target/release/rust-clipboard-uploader
+          path: target/release/rust-clipboard-uploader
