@@ -901,13 +901,13 @@ impl eframe::App for AppState {
                                             ui.horizontal(|ui| {
                                                 ui.label(egui::RichText::new(&record.uploaded_at).small().weak());
                                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    if ui.small_button("✕").clicked() {
+                                                    if ui.small_button("删除").clicked() {
                                                         to_delete = Some(record.id);
                                                     }
-                                                    if ui.small_button("📋").on_hover_text("复制链接").clicked() {
+                                                    if ui.small_button("复制").clicked() {
                                                         copy_text_to_clipboard(&record.url);
-                                                        // status update handled after borrow ends
                                                     }
+                                                    ui.hyperlink_to("打开", &record.url);
                                                 });
                                             });
                                             ui.add(egui::Label::new(
