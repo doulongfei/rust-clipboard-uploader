@@ -111,20 +111,26 @@ fn db_insert(url: &str, src: &str) {
 }
 
 fn db_load(limit: usize) -> Vec<HistoryRecord> {
-    open_db().map(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, url, src, uploaded_at FROM history ORDER BY id DESC LIMIT ?1"
-        ).ok()?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok(HistoryRecord {
-                id: row.get(0)?,
-                url: row.get(1)?,
-                src: row.get(2)?,
-                uploaded_at: row.get(3)?,
-            })
-        }).ok()?;
-        Some(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
-    }).flatten().unwrap_or_default()
+    let conn = match open_db() {
+        Some(c) => c,
+        None => return vec![],
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT id, url, src, uploaded_at FROM history ORDER BY id DESC LIMIT ?1"
+    ) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    stmt.query_map(params![limit as i64], |row| {
+        Ok(HistoryRecord {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            src: row.get(2)?,
+            uploaded_at: row.get(3)?,
+        })
+    })
+    .map(|rows| rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+    .unwrap_or_default()
 }
 
 fn db_delete(id: i64) {
@@ -175,23 +181,48 @@ fn image_fingerprint(data: &[u8]) -> u64 {
 }
 
 // ── 响应解析 ─────────────────────────────────────────────
+/// 支持路径格式：
+///   "text"          → 原始文本
+///   "[0].url"       → JSON 数组第0项的 url 字段
+///   "json.url"      → JSON 对象的 url 字段
+///   "json.data.url" → 嵌套字段
 fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
-    let resp = cfg.response.as_deref().unwrap_or("text");
-    if resp == "text" {
-        return Some(text.trim().to_string());
-    }
-    if !resp.starts_with("json") {
+    let resp = cfg.response.as_deref().unwrap_or("text").trim();
+    if resp == "text" || resp.is_empty() {
         return Some(text.trim().to_string());
     }
     let j: serde_json::Value = serde_json::from_str(text).ok()?;
-    let root = if j.is_array() { j.get(0)? } else { &j };
-    let path_str = resp.strip_prefix("json.").unwrap_or("").trim();
-    if path_str.is_empty() {
-        return Some(root.to_string());
+    // 统一转成路径段列表
+    // "[0].url" → ["0", "url"]
+    // "json.url" → ["url"]
+    // "json.data.link" → ["data", "link"]
+    let path_str = if resp.starts_with("json.") {
+        resp.strip_prefix("json.").unwrap_or("").to_string()
+    } else if resp == "json" {
+        String::new()
+    } else {
+        // 处理 "[N].field...." 格式，去掉方括号
+        resp.replace('[', "").replace(']', "")
+    };
+
+    let mut cur = &j;
+    for seg in path_str.split('.') {
+        if seg.is_empty() { continue; }
+        // 尝试数字索引（数组）
+        if let Ok(idx) = seg.parse::<usize>() {
+            cur = cur.get(idx)?;
+        } else {
+            // 字符串键（对象）
+            // 如果当前是数组，先取第0项
+            if cur.is_array() {
+                cur = cur.get(0)?;
+            }
+            cur = cur.get(seg)?;
+        }
     }
-    let mut cur = root;
-    for key in path_str.split('.') {
-        cur = cur.get(key)?;
+    // 如果路径为空，取数组第0项或对象本身
+    if path_str.is_empty() {
+        if cur.is_array() { cur = cur.get(0)?; }
     }
     if cur.is_string() {
         cur.as_str().map(|s| s.to_string())
