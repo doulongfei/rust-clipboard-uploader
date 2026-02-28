@@ -1,14 +1,30 @@
 use eframe::egui;
 use std::fs;
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use directories::ProjectDirs;
 use anyhow::{Result, Context};
-
 use arboard::Clipboard;
 use image::{ExtendedColorType, ImageEncoder};
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart;
+use global_hotkey::{GlobalHotKeyManager, GlobalHotKeyEvent, hotkey::{HotKey, Modifiers, Code}};
+use tray_icon::{TrayIconBuilder, Icon as TrayIconImg, menu::{Menu, MenuItem, PredefinedMenuItem}};
 
+// ── 消息类型（后台线程 → 主线程）──────────────────────────
+#[derive(Debug)]
+enum AppEvent {
+    UploadSuccess(String),
+    UploadError(String),
+    TrayShowWindow,
+    TrayUpload,
+    TrayToggleWatch,
+    TrayQuit,
+}
+
+// ── 配置 ─────────────────────────────────────────────────
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Config {
     upload_url: String,
@@ -17,6 +33,9 @@ struct Config {
     headers: Option<serde_json::Value>,
     response: Option<String>,
     copy_to_clipboard: Option<bool>,
+    auto_watch: Option<bool>,
+    notify_on_success: Option<bool>,
+    hotkey: Option<String>,
 }
 
 impl Default for Config {
@@ -28,40 +47,37 @@ impl Default for Config {
             headers: None,
             response: Some("text".to_string()),
             copy_to_clipboard: Some(false),
+            auto_watch: Some(false),
+            notify_on_success: Some(false),
+            hotkey: None,
         }
     }
 }
 
+// ── 配置文件路径 ──────────────────────────────────────────
 fn config_path() -> Option<std::path::PathBuf> {
-    if let Some(proj) = ProjectDirs::from("com", "example", "RustClipboardUploader") {
-        let dir = proj.config_dir();
-        let _ = fs::create_dir_all(dir);
-        return Some(dir.join("config.yaml"));
-    }
-    None
+    ProjectDirs::from("com", "example", "RustClipboardUploader").map(|proj| {
+        let dir = proj.config_dir().to_path_buf();
+        let _ = fs::create_dir_all(&dir);
+        dir.join("config.yaml")
+    })
 }
 
 fn load_config() -> Config {
-    if let Some(p) = config_path() {
-        if p.exists() {
-            if let Ok(s) = fs::read_to_string(&p) {
-                if let Ok(cfg) = serde_yaml::from_str(&s) {
-                    return cfg;
-                }
-            }
-        }
-    }
-    Config::default()
+    config_path()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|s| serde_yaml::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 fn save_config(cfg: &Config) -> Result<()> {
     if let Some(p) = config_path() {
-        let s = serde_yaml::to_string(cfg)?;
-        fs::write(p, s)?;
+        fs::write(p, serde_yaml::to_string(cfg)?)?;
     }
     Ok(())
 }
 
+// ── 剪贴板图片读取 ────────────────────────────────────────
 fn read_clipboard_image() -> Option<Vec<u8>> {
     let mut clipboard = Clipboard::new().ok()?;
     let image = clipboard.get_image().ok()?;
@@ -73,11 +89,16 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 从响应文本中按配置提取 URL
-/// 支持：
-///   text          → 直接返回整个响应体
-///   json.foo.bar  → 从 JSON 对象按路径提取
-///   json[0].foo   → 从 JSON 数组取第 0 个元素再按路径提取
+/// 图片内容的简单指纹（长度 + 前64字节）
+fn image_fingerprint(data: &[u8]) -> u64 {
+    let len = data.len() as u64;
+    let prefix: u64 = data.iter().take(64).enumerate().fold(0u64, |acc, (i, &b)| {
+        acc ^ ((b as u64) << (i % 8 * 8))
+    });
+    len ^ (prefix.wrapping_mul(0x9e3779b97f4a7c15))
+}
+
+// ── 响应解析 ─────────────────────────────────────────────
 fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
     let resp = cfg.response.as_deref().unwrap_or("text");
     if resp == "text" {
@@ -86,27 +107,16 @@ fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
     if !resp.starts_with("json") {
         return Some(text.trim().to_string());
     }
-
     let j: serde_json::Value = serde_json::from_str(text).ok()?;
-
-    // 如果顶层是数组，先取第一个元素
-    let root = if j.is_array() {
-        j.get(0)?
-    } else {
-        &j
-    };
-
-    // 取 "json." 之后的路径，如果没有路径则直接返回 root
+    let root = if j.is_array() { j.get(0)? } else { &j };
     let path_str = resp.strip_prefix("json.").unwrap_or("").trim();
     if path_str.is_empty() {
         return Some(root.to_string());
     }
-
     let mut cur = root;
     for key in path_str.split('.') {
         cur = cur.get(key)?;
     }
-
     if cur.is_string() {
         cur.as_str().map(|s| s.to_string())
     } else {
@@ -114,6 +124,7 @@ fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
     }
 }
 
+// ── 上传 ─────────────────────────────────────────────────
 fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<String> {
     let client = Client::new();
     let file_field = cfg.file_field.clone().unwrap_or_else(|| "file".to_string());
@@ -121,14 +132,12 @@ fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<String> {
         .file_name("screenshot.png")
         .mime_str("image/png")?;
     let form = multipart::Form::new().part(file_field, part);
-
     let method = cfg.method.as_deref().unwrap_or("POST");
     let mut req = if method.eq_ignore_ascii_case("PUT") {
         client.put(&cfg.upload_url)
     } else {
         client.post(&cfg.upload_url)
     };
-
     if let Some(hv) = &cfg.headers {
         if let Some(obj) = hv.as_object() {
             for (k, v) in obj.iter() {
@@ -137,115 +146,204 @@ fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<String> {
             }
         }
     }
-
     let resp = req.multipart(form).send().context("发送请求失败")?;
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
-
     if status.is_success() {
         return Ok(extract_url_from_response(cfg, &text).unwrap_or(text));
     }
     Err(anyhow::anyhow!("请求失败: {} — {}", status, text.trim()))
 }
 
+// ── 剪贴板写入 ───────────────────────────────────────────
 fn copy_text_to_clipboard(text: &str) -> bool {
     Clipboard::new()
         .and_then(|mut cb| cb.set_text(text.to_string()))
         .is_ok()
 }
 
+// ── 系统通知 ─────────────────────────────────────────────
+fn send_notification(title: &str, body: &str) {
+    let _ = notify_rust::Notification::new()
+        .summary(title)
+        .body(body)
+        .timeout(notify_rust::Timeout::Milliseconds(4000))
+        .show();
+}
+
+// ── 字体加载 ─────────────────────────────────────────────
 fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-
     let candidates: &[&str] = &[
-        // macOS
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/Library/Fonts/Arial Unicode MS.ttf",
-        // Linux
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        "/usr/share/fonts/truetype/arphic/uming.ttc",
-        // Windows
         "C:\\Windows\\Fonts\\msyh.ttc",
         "C:\\Windows\\Fonts\\simsun.ttc",
     ];
-
     for path in candidates {
-        if let Ok(data) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "cjk".to_owned(),
-                egui::FontData::from_owned(data).into(),
-            );
-            fonts
-                .families
-                .get_mut(&egui::FontFamily::Proportional)
-                .unwrap()
-                .insert(0, "cjk".to_owned());
-            fonts
-                .families
-                .get_mut(&egui::FontFamily::Monospace)
-                .unwrap()
-                .push("cjk".to_owned());
+        if let Ok(data) = fs::read(path) {
+            fonts.font_data.insert("cjk".to_owned(), egui::FontData::from_owned(data).into());
+            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "cjk".to_owned());
+            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().push("cjk".to_owned());
             break;
         }
     }
-
     ctx.set_fonts(fonts);
 }
 
-fn main() {
-    let cfg = load_config();
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([520.0, 380.0])
-            .with_title("剪贴板上传工具"),
-        ..Default::default()
+// ── 解析快捷键字符串 ──────────────────────────────────────
+fn parse_hotkey(s: &str) -> Option<HotKey> {
+    // 格式: "ctrl+shift+u" / "alt+v" / "super+u"
+    let parts: Vec<&str> = s.split('+').collect();
+    if parts.is_empty() { return None; }
+    let key_str = parts.last()?;
+    let code = match key_str.to_lowercase().as_str() {
+        "a" => Code::KeyA, "b" => Code::KeyB, "c" => Code::KeyC,
+        "d" => Code::KeyD, "e" => Code::KeyE, "f" => Code::KeyF,
+        "g" => Code::KeyG, "h" => Code::KeyH, "i" => Code::KeyI,
+        "j" => Code::KeyJ, "k" => Code::KeyK, "l" => Code::KeyL,
+        "m" => Code::KeyM, "n" => Code::KeyN, "o" => Code::KeyO,
+        "p" => Code::KeyP, "q" => Code::KeyQ, "r" => Code::KeyR,
+        "s" => Code::KeyS, "t" => Code::KeyT, "u" => Code::KeyU,
+        "v" => Code::KeyV, "w" => Code::KeyW, "x" => Code::KeyX,
+        "y" => Code::KeyY, "z" => Code::KeyZ,
+        "f1" => Code::F1, "f2" => Code::F2, "f3" => Code::F3,
+        "f4" => Code::F4, "f5" => Code::F5, "f6" => Code::F6,
+        _ => return None,
     };
-    if let Err(e) = eframe::run_native(
-        "剪贴板上传工具",
-        options,
-        Box::new(|cc| {
-            setup_fonts(&cc.egui_ctx);
-            Ok(Box::new(AppState {
-                config: cfg,
-                last_url: None,
-                status: None,
-                uploading: false,
-            }))
-        }),
-    ) {
-        eprintln!("启动失败: {e}");
-        std::process::exit(1);
+    let mut mods = Modifiers::empty();
+    for part in &parts[..parts.len()-1] {
+        match part.to_lowercase().as_str() {
+            "ctrl" | "control" => mods |= Modifiers::CONTROL,
+            "shift" => mods |= Modifiers::SHIFT,
+            "alt" | "option" => mods |= Modifiers::ALT,
+            "super" | "meta" | "cmd" | "command" => mods |= Modifiers::SUPER,
+            _ => {}
+        }
+    }
+    Some(HotKey::new(Some(mods), code))
+}
+
+// ── 执行上传并通过 channel 回传结果 ──────────────────────
+fn do_upload(cfg: &Config, tx: &mpsc::Sender<AppEvent>) {
+    match read_clipboard_image() {
+        Some(img) => {
+            match upload_image(cfg, img) {
+                Ok(url) => {
+                    if cfg.copy_to_clipboard.unwrap_or(false) {
+                        copy_text_to_clipboard(&url);
+                    }
+                    if cfg.notify_on_success.unwrap_or(false) {
+                        send_notification("上传成功", &url);
+                    }
+                    let _ = tx.send(AppEvent::UploadSuccess(url));
+                }
+                Err(e) => { let _ = tx.send(AppEvent::UploadError(format!("上传失败: {}", e))); }
+            }
+        }
+        None => { let _ = tx.send(AppEvent::UploadError("剪贴板中未检测到图片".to_string())); }
     }
 }
 
+// ── 应用状态 ─────────────────────────────────────────────
 struct AppState {
     config: Config,
+    shared_config: Arc<Mutex<Config>>,
     last_url: Option<String>,
-    status: Option<(bool, String)>, // (is_error, message)
+    status: Option<(bool, String)>,
     uploading: bool,
+    rx: mpsc::Receiver<AppEvent>,
+    tx: mpsc::Sender<AppEvent>,
+    watch_active: bool,
+    quit_requested: bool,
+}
+
+impl AppState {
+    fn trigger_upload(&mut self) {
+        if self.uploading { return; }
+        self.uploading = true;
+        self.status = None;
+        self.last_url = None;
+        let cfg = self.config.clone();
+        let tx = self.tx.clone();
+        thread::spawn(move || do_upload(&cfg, &tx));
+    }
+
+    fn start_watch_thread(&self) {
+        let tx = self.tx.clone();
+        let shared = Arc::clone(&self.shared_config);
+        thread::spawn(move || {
+            let mut last_fp: u64 = 0;
+            loop {
+                thread::sleep(Duration::from_millis(500));
+                let cfg = shared.lock().unwrap().clone();
+                if !cfg.auto_watch.unwrap_or(false) { continue; }
+                if let Some(img) = read_clipboard_image() {
+                    let fp = image_fingerprint(&img);
+                    if fp != last_fp {
+                        last_fp = fp;
+                        do_upload(&cfg, &tx);
+                    }
+                }
+            }
+        });
+    }
 }
 
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 接收后台事件
+        while let Ok(event) = self.rx.try_recv() {
+            match event {
+                AppEvent::UploadSuccess(url) => {
+                    let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
+                    let msg = if auto_copy { "上传成功，链接已复制".to_string() } else { "上传成功".to_string() };
+                    self.status = Some((false, msg));
+                    self.last_url = Some(url);
+                    self.uploading = false;
+                }
+                AppEvent::UploadError(e) => {
+                    self.status = Some((true, e));
+                    self.uploading = false;
+                }
+                AppEvent::TrayShowWindow => { ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true)); }
+                AppEvent::TrayUpload => { self.trigger_upload(); }
+                AppEvent::TrayToggleWatch => {
+                    let cur = self.config.auto_watch.unwrap_or(false);
+                    self.config.auto_watch = Some(!cur);
+                    *self.shared_config.lock().unwrap() = self.config.clone();
+                    self.watch_active = !cur;
+                }
+                AppEvent::TrayQuit => { self.quit_requested = true; }
+            }
+            ctx.request_repaint();
+        }
+
+        if self.quit_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
+        // 持续刷新以响应后台事件
+        ctx.request_repaint_after(Duration::from_millis(200));
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("剪贴板上传工具");
             ui.add_space(8.0);
 
-            // ── 配置区 ──────────────────────────────────────────
+            // ── 配置区 ──────────────────────────────────────
             egui::Grid::new("config_grid")
                 .num_columns(2)
                 .spacing([8.0, 6.0])
                 .striped(true)
                 .show(ui, |ui| {
                     ui.label("上传地址:");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.config.upload_url)
-                            .desired_width(f32::INFINITY),
-                    );
+                    ui.add(egui::TextEdit::singleline(&mut self.config.upload_url).desired_width(f32::INFINITY));
                     ui.end_row();
 
                     ui.label("请求方法:");
@@ -265,25 +363,51 @@ impl eframe::App for AppState {
                     ui.vertical(|ui| {
                         let resp = self.config.response.get_or_insert_with(|| "text".to_string());
                         ui.add(egui::TextEdit::singleline(resp).desired_width(f32::INFINITY));
-                        ui.label(
-                            egui::RichText::new("text | json.url | json.data.link")
-                                .small()
-                                .weak(),
-                        );
+                        ui.label(egui::RichText::new("text | json.url | json.data.link").small().weak());
                     });
                     ui.end_row();
 
-                    ui.label("");
-                    let copy = self.config.copy_to_clipboard.get_or_insert(false);
-                    ui.checkbox(copy, "上传成功后自动复制链接");
+                    ui.label("全局快捷键:");
+                    ui.vertical(|ui| {
+                        let hk = self.config.hotkey.get_or_insert_with(String::new);
+                        ui.add(egui::TextEdit::singleline(hk)
+                            .hint_text("ctrl+shift+u")
+                            .desired_width(f32::INFINITY));
+                        ui.label(egui::RichText::new("留空则不设置，修改后保存配置并重启生效").small().weak());
+                    });
+                    ui.end_row();
+
+                    ui.label("上传选项:");
+                    ui.vertical(|ui| {
+                        let copy = self.config.copy_to_clipboard.get_or_insert(false);
+                        ui.checkbox(copy, "上传成功后自动复制链接");
+                        let notify = self.config.notify_on_success.get_or_insert(false);
+                        ui.checkbox(notify, "上传成功后发送系统通知");
+                    });
+                    ui.end_row();
+
+                    ui.label("自动监听:");
+                    ui.horizontal(|ui| {
+                        let watch = self.config.auto_watch.get_or_insert(false);
+                        if ui.checkbox(watch, "监听剪贴板变化自动上传").changed() {
+                            self.watch_active = *watch;
+                            *self.shared_config.lock().unwrap() = self.config.clone();
+                        }
+                        if self.watch_active {
+                            ui.label(egui::RichText::new("👁 监听中").color(egui::Color32::from_rgb(80, 200, 120)));
+                        } else {
+                            ui.label(egui::RichText::new("未监听").weak());
+                        }
+                    });
                     ui.end_row();
                 });
 
             ui.add_space(10.0);
 
-            // ── 操作按钮 ────────────────────────────────────────
+            // ── 操作按钮 ────────────────────────────────────
             ui.horizontal(|ui| {
                 if ui.button("💾 保存配置").clicked() {
+                    *self.shared_config.lock().unwrap() = self.config.clone();
                     match save_config(&self.config) {
                         Ok(_) => self.status = Some((false, "配置已保存".to_string())),
                         Err(e) => self.status = Some((true, format!("保存失败: {}", e))),
@@ -291,36 +415,8 @@ impl eframe::App for AppState {
                 }
 
                 let btn_label = if self.uploading { "⏳ 上传中..." } else { "📤 从剪贴板上传" };
-                let upload_btn = ui.add_enabled(!self.uploading, egui::Button::new(btn_label));
-
-                if upload_btn.clicked() {
-                    match read_clipboard_image() {
-                        Some(img) => {
-                            self.uploading = true;
-                            self.status = None;
-                            self.last_url = None;
-                            ctx.request_repaint();
-
-                            match upload_image(&self.config, img) {
-                                Ok(url) => {
-                                    let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
-                                    if auto_copy && copy_text_to_clipboard(&url) {
-                                        self.status = Some((false, "上传成功，链接已复制".to_string()));
-                                    } else {
-                                        self.status = Some((false, "上传成功".to_string()));
-                                    }
-                                    self.last_url = Some(url);
-                                }
-                                Err(e) => {
-                                    self.status = Some((true, format!("上传失败: {}", e)));
-                                }
-                            }
-                            self.uploading = false;
-                        }
-                        None => {
-                            self.status = Some((true, "剪贴板中未检测到图片".to_string()));
-                        }
-                    }
+                if ui.add_enabled(!self.uploading, egui::Button::new(btn_label)).clicked() {
+                    self.trigger_upload();
                 }
             });
 
@@ -328,52 +424,185 @@ impl eframe::App for AppState {
             ui.separator();
             ui.add_space(4.0);
 
-            // ── 状态栏 ──────────────────────────────────────────
+            // ── 状态栏 ──────────────────────────────────────
             if let Some((is_err, msg)) = &self.status {
+                let color = if *is_err { egui::Color32::from_rgb(220, 80, 80) } else { egui::Color32::from_rgb(80, 200, 120) };
                 let icon = if *is_err { "❌" } else { "✅" };
-                let color = if *is_err {
-                    egui::Color32::from_rgb(220, 80, 80)
-                } else {
-                    egui::Color32::from_rgb(80, 200, 120)
-                };
                 ui.label(egui::RichText::new(format!("{} {}", icon, msg)).color(color));
                 ui.add_space(4.0);
             }
 
-            // ── 返回链接区 ──────────────────────────────────────
+            // ── 返回链接区 ──────────────────────────────────
             if let Some(url) = self.last_url.clone() {
                 ui.label(egui::RichText::new("返回链接").strong());
                 ui.add_space(2.0);
-
                 egui::Frame::default()
                     .fill(egui::Color32::from_gray(30))
                     .rounding(egui::Rounding::same(4.0))
                     .inner_margin(egui::Margin::same(8.0))
                     .show(ui, |ui: &mut egui::Ui| {
                         ui.set_width(ui.available_width());
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&url)
-                                    .monospace()
-                                    .color(egui::Color32::from_rgb(100, 200, 255)),
-                            )
-                            .wrap(),
-                        );
+                        ui.add(egui::Label::new(
+                            egui::RichText::new(&url).monospace().color(egui::Color32::from_rgb(100, 200, 255))
+                        ).wrap());
                     });
-
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui.button("📋 复制链接").clicked() {
                         if copy_text_to_clipboard(&url) {
                             self.status = Some((false, "已复制到剪贴板".to_string()));
                         } else {
-                            self.status = Some((true, "复制到剪贴板失败".to_string()));
+                            self.status = Some((true, "复制失败".to_string()));
                         }
                     }
-                    // 可点击的超链接
                     ui.hyperlink_to("🔗 在浏览器打开", &url);
                 });
             }
         });
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // 窗口关闭时保存配置
+        let _ = save_config(&self.config);
+    }
+}
+
+fn main() {
+    let cfg = load_config();
+    let shared_config = Arc::new(Mutex::new(cfg.clone()));
+    let (tx, rx) = mpsc::channel::<AppEvent>();
+
+    // ── 全局快捷键 ────────────────────────────────────────
+    let _hotkey_manager = GlobalHotKeyManager::new().ok();
+    let mut _registered_hotkey: Option<HotKey> = None;
+    if let Some(ref hk_str) = cfg.hotkey {
+        if !hk_str.is_empty() {
+            if let Some(hk) = parse_hotkey(hk_str) {
+                if let Some(ref mgr) = _hotkey_manager {
+                    if mgr.register(hk).is_ok() {
+                        _registered_hotkey = Some(hk);
+                        let tx2 = tx.clone();
+                        thread::spawn(move || {
+                            loop {
+                                if let Ok(_event) = GlobalHotKeyEvent::receiver().recv() {
+                                    let _ = tx2.send(AppEvent::TrayUpload);
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 系统托盘 ─────────────────────────────────────────
+    let tray_menu = Menu::new();
+    let item_show = MenuItem::new("打开窗口", true, None);
+    let item_upload = MenuItem::new("从剪贴板上传", true, None);
+    let item_watch = MenuItem::new("自动监听: 开/关", true, None);
+    let item_quit = MenuItem::new("退出", true, None);
+
+    let _ = tray_menu.append(&item_show);
+    let _ = tray_menu.append(&item_upload);
+    let _ = tray_menu.append(&item_watch);
+    let _ = tray_menu.append(&PredefinedMenuItem::separator());
+    let _ = tray_menu.append(&item_quit);
+
+    // 创建最小的 1x1 白色 PNG 作为托盘图标
+    let icon_data = vec![
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+        0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, // 16x16
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x91, 0x68, 0x36,
+        0x00, 0x00, 0x00, 0x34, 0x49, 0x44, 0x41, 0x54, // IDAT
+        0x78, 0x9C, 0x62, 0xF8, 0xCF, 0xC0, 0xC0, 0xC0,
+        0xF0, 0x9F, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81,
+        0x81, 0xFF, 0x18, 0x18, 0x18, 0x18, 0x18, 0x98,
+        0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81,
+        0x81, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00,
+        0x0E, 0xF0, 0x03, 0x01, 0xEF, 0x2F, 0x2A, 0x0B,
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND
+        0xAE, 0x42, 0x60, 0x82,
+    ];
+
+    let tray_icon = if let Ok(img) = image::load_from_memory(&icon_data) {
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        TrayIconImg::from_rgba(rgba.into_raw(), w, h).ok().and_then(|icon| {
+            TrayIconBuilder::new()
+                .with_menu(Box::new(tray_menu))
+                .with_icon(icon)
+                .with_tooltip("剪贴板上传工具")
+                .build()
+                .ok()
+        })
+    } else {
+        None
+    };
+
+    // 托盘事件监听线程
+    if tray_icon.is_some() {
+        let tx3 = tx.clone();
+        let show_id = item_show.id().clone();
+        let upload_id = item_upload.id().clone();
+        let watch_id = item_watch.id().clone();
+        let quit_id = item_quit.id().clone();
+        thread::spawn(move || {
+            loop {
+                if let Ok(event) = tray_icon::menu::MenuEvent::receiver().recv() {
+                    let evt = if event.id == show_id {
+                        AppEvent::TrayShowWindow
+                    } else if event.id == upload_id {
+                        AppEvent::TrayUpload
+                    } else if event.id == watch_id {
+                        AppEvent::TrayToggleWatch
+                    } else if event.id == quit_id {
+                        AppEvent::TrayQuit
+                    } else {
+                        continue;
+                    };
+                    let _ = tx3.send(evt);
+                }
+            }
+        });
+    }
+
+    // ── 启动 eframe ──────────────────────────────────────
+    let watch_active = cfg.auto_watch.unwrap_or(false);
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([540.0, 440.0])
+            .with_title("剪贴板上传工具"),
+        ..Default::default()
+    };
+
+    let shared_for_app = Arc::clone(&shared_config);
+    let tx_for_app = tx.clone();
+
+    if let Err(e) = eframe::run_native(
+        "剪贴板上传工具",
+        options,
+        Box::new(move |cc| {
+            setup_fonts(&cc.egui_ctx);
+            let app = AppState {
+                config: cfg,
+                shared_config: Arc::clone(&shared_for_app),
+                last_url: None,
+                status: None,
+                uploading: false,
+                rx,
+                tx: tx_for_app.clone(),
+                watch_active,
+                quit_requested: false,
+            };
+            // 启动剪贴板监听后台线程
+            app.start_watch_thread();
+            Ok(Box::new(app))
+        }),
+    ) {
+        eprintln!("启动失败: {e}");
+        std::process::exit(1);
+    }
+
+    drop(tray_icon);
 }
