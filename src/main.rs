@@ -4,11 +4,10 @@ use serde::{Deserialize, Serialize};
 use directories::ProjectDirs;
 use anyhow::{Result, Context};
 
-use arboard::Clipboard; // 读取剪贴板
-use image::ImageFormat;
+use arboard::Clipboard;
+use image::{ColorType, ImageEncoder};
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart;
-use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Config {
@@ -65,106 +64,94 @@ fn save_config(cfg: &Config) -> Result<()> {
 
 fn read_clipboard_image() -> Option<Vec<u8>> {
     let mut clipboard = Clipboard::new().ok()?;
-    if let Ok(image) = clipboard.get_image() {
-        // arboard 提供的 image 为 ImageData { width, height, bytes }
-        // 这里我们将其编码为 PNG
-        if let Ok(buf) = image_to_png(&image.bytes, image.width as u32, image.height as u32) {
-            return Some(buf);
-        }
-    }
-    None
-}
-
-fn image_to_png(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
-    // arboard bytes are RGBA32
-    use image::{ColorType, ImageEncoder};
+    let image = clipboard.get_image().ok()?;
     let mut out = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(&mut out);
     encoder
-        .encode(bytes, width, height, ColorType::Rgba8)
-        .context("PNG encode failed")?;
-    Ok(out)
+        .write_image(&image.bytes, image.width as u32, image.height as u32, ColorType::Rgba8)
+        .ok()?;
+    Some(out)
 }
 
-fn extract_url_from_text(cfg: &Config, text: &str) -> Option<String> {
-    if let Some(resp_mode) = &cfg.response {
-        if resp_mode == "text" {
-            return Some(text.trim().to_string());
-        }
-        if resp_mode.starts_with("json") {
-            if let Some(idx) = resp_mode.find('.') {
-                let path = &resp_mode[idx+1..];
-                if let Ok(j) = serde_json::from_str::<serde_json::Value>(text) {
-                    let mut cur = &j;
-                    for p in path.split('.') {
-                        if let Some(next) = cur.get(p) {
-                            cur = next;
-                        } else {
-                            return None;
-                        }
-                    }
-                    if cur.is_string() {
-                        return cur.as_str().map(|s| s.to_string());
-                    } else {
-                        return Some(cur.to_string());
-                    }
-                }
+fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
+    match cfg.response.as_deref().unwrap_or("text") {
+        "text" => Some(text.trim().to_string()),
+        resp if resp.starts_with("json.") => {
+            let path = &resp["json.".len()..];
+            let j: serde_json::Value = serde_json::from_str(text).ok()?;
+            let mut cur = &j;
+            for key in path.split('.') {
+                cur = cur.get(key)?;
+            }
+            if cur.is_string() {
+                cur.as_str().map(|s| s.to_string())
+            } else {
+                Some(cur.to_string())
             }
         }
+        _ => Some(text.trim().to_string()),
     }
-    None
 }
 
 fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<String> {
     let client = Client::new();
-    let url = &cfg.upload_url;
     let file_field = cfg.file_field.clone().unwrap_or_else(|| "file".to_string());
-    let part = multipart::Part::bytes(img).file_name("screenshot.png").mime_str("image/png")?;
+    let part = multipart::Part::bytes(img)
+        .file_name("screenshot.png")
+        .mime_str("image/png")?;
     let form = multipart::Form::new().part(file_field, part);
-    let mut req = match cfg.method.clone().unwrap_or_else(|| "POST".to_string()).as_str() {
-        "PUT" | "put" => client.put(url),
-        _ => client.post(url),
+
+    let method = cfg.method.as_deref().unwrap_or("POST");
+    let mut req = if method.eq_ignore_ascii_case("PUT") {
+        client.put(&cfg.upload_url)
+    } else {
+        client.post(&cfg.upload_url)
     };
-    // add headers
+
     if let Some(hv) = &cfg.headers {
         if let Some(obj) = hv.as_object() {
             for (k, v) in obj.iter() {
-                if let Some(s) = v.as_str() {
-                    req = req.header(k, s);
-                } else {
-                    req = req.header(k, v.to_string());
-                }
+                let val = v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string());
+                req = req.header(k, val);
             }
         }
     }
-    let resp = req.multipart(form).send()?;
+
+    let resp = req.multipart(form).send().context("发送请求失败")?;
     let status = resp.status();
-    let text = resp.text()?;
+    let text = resp.text().unwrap_or_default();
+
     if status.is_success() {
-        if let Some(url) = extract_url_from_text(cfg, &text) {
-            return Ok(url);
-        }
-        return Ok(text);
+        return Ok(extract_url_from_response(cfg, &text)
+            .unwrap_or(text));
     }
-    Err(anyhow::anyhow!("请求失败: {}", status))
+    Err(anyhow::anyhow!("请求失败: {} — {}", status, text.trim()))
 }
 
 fn copy_text_to_clipboard(text: &str) -> bool {
-    if let Ok(mut cb) = Clipboard::new() {
-        if cb.set_text(text.to_string()).is_ok() {
-            return true;
-        }
-    }
-    false
+    Clipboard::new()
+        .and_then(|mut cb| cb.set_text(text.to_string()))
+        .is_ok()
 }
 
 fn main() -> Result<()> {
     let cfg = load_config();
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([480.0, 320.0])
+            .with_title("剪贴板上传工具"),
+        ..Default::default()
+    };
     eframe::run_native(
         "剪贴板上传工具",
         options,
-        Box::new(|_cc| Box::new(AppState { config: cfg, last_url: None, status: None }))
+        Box::new(|_cc| {
+            Ok(Box::new(AppState {
+                config: cfg,
+                last_url: None,
+                status: None,
+            }))
+        }),
     )?;
     Ok(())
 }
@@ -178,90 +165,102 @@ struct AppState {
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("剪贴板上传工具（Rust）");
+            ui.heading("剪贴板上传工具");
+            ui.add_space(8.0);
+
+            egui::Grid::new("config_grid")
+                .num_columns(2)
+                .spacing([8.0, 6.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label("上传地址:");
+                    ui.add(egui::TextEdit::singleline(&mut self.config.upload_url).desired_width(300.0));
+                    ui.end_row();
+
+                    ui.label("请求方法:");
+                    ui.horizontal(|ui| {
+                        let method = self.config.method.get_or_insert_with(|| "POST".to_string());
+                        ui.selectable_value(method, "POST".to_string(), "POST");
+                        ui.selectable_value(method, "PUT".to_string(), "PUT");
+                    });
+                    ui.end_row();
+
+                    ui.label("文件字段:");
+                    let ff = self.config.file_field.get_or_insert_with(|| "file".to_string());
+                    ui.add(egui::TextEdit::singleline(ff).desired_width(300.0));
+                    ui.end_row();
+
+                    ui.label("响应解析:");
+                    ui.vertical(|ui| {
+                        let resp = self.config.response.get_or_insert_with(|| "text".to_string());
+                        ui.add(egui::TextEdit::singleline(resp).desired_width(300.0));
+                        ui.label(egui::RichText::new("text 或 json.data.link").small().weak());
+                    });
+                    ui.end_row();
+
+                    ui.label("");
+                    let copy = self.config.copy_to_clipboard.get_or_insert(false);
+                    ui.checkbox(copy, "上传成功后自动复制链接");
+                    ui.end_row();
+                });
+
+            ui.add_space(8.0);
+
             ui.horizontal(|ui| {
-                ui.label("上传地址:");
-                let mut url = self.config.upload_url.clone();
-                if ui.text_edit_singleline(&mut url).changed() {
-                    self.config.upload_url = url.clone();
+                if ui.button("💾 保存配置").clicked() {
+                    match save_config(&self.config) {
+                        Ok(_) => self.status = Some("✅ 配置已保存".to_string()),
+                        Err(e) => self.status = Some(format!("❌ 保存失败: {}", e)),
+                    }
                 }
-            });
-            ui.horizontal(|ui| {
-                ui.label("方法:");
-                let mut method = self.config.method.clone().unwrap_or_else(|| "POST".to_string());
-                if ui.selectable_value(&mut method, "POST".to_string(), "POST").clicked() {}
-                ui.same_line();
-                if ui.selectable_value(&mut method, "PUT".to_string(), "PUT").clicked() {}
-                self.config.method = Some(method);
-            });
-            ui.horizontal(|ui| {
-                ui.label("文件字段:");
-                let mut ff = self.config.file_field.clone().unwrap_or_else(|| "file".to_string());
-                if ui.text_edit_singleline(&mut ff).changed() {
-                    self.config.file_field = Some(ff.clone());
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("响应解析(response):");
-                let mut resp = self.config.response.clone().unwrap_or_else(|| "text".to_string());
-                if ui.text_edit_singleline(&mut resp).changed() {
-                    self.config.response = Some(resp.clone());
-                }
-                ui.label("(text 或 json.path 如 json.data.link)");
-            });
-            ui.horizontal(|ui| {
-                let mut copy = self.config.copy_to_clipboard.unwrap_or(false);
-                if ui.checkbox(&mut copy, "上传成功后复制链接到剪贴板").changed() {
-                    self.config.copy_to_clipboard = Some(copy);
-                }
-            });
-            if ui.button("保存配置").clicked() {
-                match save_config(&self.config) {
-                    Ok(_) => self.status = Some("配置已保存".to_string()),
-                    Err(e) => self.status = Some(format!("保存配置失败: {}", e)),
-                }
-            }
-            ui.separator();
-            if ui.button("从剪贴板上传").clicked() {
-                self.status = Some("正在读取剪贴板...".to_string());
-                if let Some(img) = read_clipboard_image() {
-                    self.status = Some("正在上传...".to_string());
-                    match upload_image(&self.config, img) {
-                        Ok(url) => {
-                            self.last_url = Some(url.clone());
-                            self.status = Some("上传成功".to_string());
-                            if self.config.copy_to_clipboard.unwrap_or(false) {
-                                if copy_text_to_clipboard(&url) {
-                                    self.status = Some("上传成功，链接已复制".to_string());
-                                } else {
-                                    self.status = Some("上传成功，复制到剪贴板失败".to_string());
+
+                if ui.button("📋 从剪贴板上传").clicked() {
+                    match read_clipboard_image() {
+                        Some(img) => {
+                            self.status = Some("⏳ 正在上传...".to_string());
+                            match upload_image(&self.config, img) {
+                                Ok(url) => {
+                                    let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
+                                    if auto_copy && copy_text_to_clipboard(&url) {
+                                        self.status = Some("✅ 上传成功，链接已复制".to_string());
+                                    } else {
+                                        self.status = Some("✅ 上传成功".to_string());
+                                    }
+                                    self.last_url = Some(url);
+                                }
+                                Err(e) => {
+                                    self.last_url = None;
+                                    self.status = Some(format!("❌ 上传失败: {}", e));
                                 }
                             }
                         }
-                        Err(e) => {
-                            self.last_url = None;
-                            self.status = Some(format!("上传失败: {}", e));
+                        None => {
+                            self.status = Some("⚠️ 剪贴板中未检测到图片".to_string());
                         }
                     }
-                } else {
-                    self.status = Some("未检测到剪贴板图片".to_string());
                 }
-            }
+            });
+
+            ui.add_space(4.0);
             ui.separator();
+
             if let Some(s) = &self.status {
-                ui.label(format!("状态: {}", s));
+                ui.label(s);
             }
-            if let Some(url) = &self.last_url {
-                ui.separator();
+
+            if let Some(url) = self.last_url.clone() {
+                ui.add_space(4.0);
                 ui.label("返回链接:");
-                ui.monospace(url);
-                if ui.button("复制链接").clicked() {
-                    if copy_text_to_clipboard(url) {
-                        self.status = Some("已复制到剪贴板".to_string());
-                    } else {
-                        self.status = Some("复制到剪贴板失败".to_string());
+                ui.horizontal(|ui| {
+                    ui.monospace(&url);
+                    if ui.small_button("📋 复制").clicked() {
+                        if copy_text_to_clipboard(&url) {
+                            self.status = Some("✅ 已复制到剪贴板".to_string());
+                        } else {
+                            self.status = Some("❌ 复制到剪贴板失败".to_string());
+                        }
                     }
-                }
+                });
             }
         });
     }

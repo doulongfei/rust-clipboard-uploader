@@ -1,16 +1,20 @@
 [package]
 name = "rust-clipboard-uploader"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
+description = "从剪贴板读取图片并上传到图床的 GUI 工具"
+license = "MIT"
 
 [dependencies]
-eframe = "0.24"
-egui = "0.24"
+# x11 + wayland 同时启用（eframe 默认已包含，此处显式声明以便阅读）
+# glow = OpenGL 渲染（兼容性最广）；如需现代 GPU 可改为 features = ["wgpu", "x11", "wayland"]
+eframe = { version = "0.29", default-features = true }
+egui = "0.29"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1.0"
-reqwest = { version = "0.11", features = ["blocking", "json", "multipart"] }
-directories = "4.0"
+reqwest = { version = "0.12", features = ["blocking", "multipart"] }
+directories = "5.0"
 anyhow = "1.0"
-arboard = "2.0"
-image = "0.24"
+arboard = "3.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
