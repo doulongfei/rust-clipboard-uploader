@@ -668,7 +668,7 @@ impl eframe::App for AppState {
                             *self.shared_config.lock().unwrap() = self.config.clone();
                         }
                         if self.watch_active {
-                            ui.label(egui::RichText::new("👁 监听中").color(egui::Color32::from_rgb(80, 200, 120)));
+                            ui.label(egui::RichText::new("◉ 监听中").color(egui::Color32::from_rgb(80, 200, 120)));
                         } else {
                             ui.label(egui::RichText::new("未监听").weak());
                         }
@@ -680,7 +680,7 @@ impl eframe::App for AppState {
 
             // ── 操作按钮 ────────────────────────────────────
             ui.horizontal(|ui| {
-                let save_label = if self.config_dirty { "💾 保存配置 ●" } else { "💾 保存配置" };
+                let save_label = if self.config_dirty { "保存配置 ●" } else { "保存配置" };
                 if ui.button(save_label).clicked() {
                     *self.shared_config.lock().unwrap() = self.config.clone();
                     match save_config(&self.config) {
@@ -692,7 +692,7 @@ impl eframe::App for AppState {
                     }
                 }
 
-                let btn_label = if has_uploading { "⏳ 上传中..." } else { "📤 从剪贴板上传" };
+                let btn_label = if has_uploading { "⧗ 上传中..." } else { "↑ 从剪贴板上传" };
                 if ui.add_enabled(!has_uploading, egui::Button::new(btn_label)).clicked() {
                     self.trigger_upload();
                 }
@@ -703,7 +703,7 @@ impl eframe::App for AppState {
             // ── 状态栏 ──────────────────────────────────────
             if let Some((is_err, msg)) = &self.status {
                 let color = if *is_err { egui::Color32::from_rgb(220, 80, 80) } else { egui::Color32::from_rgb(80, 200, 120) };
-                let icon = if *is_err { "❌" } else { "✅" };
+                let icon = if *is_err { "✗" } else { "✓" };
                 ui.label(egui::RichText::new(format!("{} {}", icon, msg)).color(color));
                 ui.add_space(4.0);
             }
@@ -721,8 +721,8 @@ impl eframe::App for AppState {
                                 egui::RichText::new(&url).monospace().small().color(egui::Color32::from_rgb(100, 200, 255))
                             ).wrap());
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.hyperlink_to("🔗", &url).on_hover_text("在浏览器打开");
-                                if ui.small_button("📋").on_hover_text("复制链接").clicked() {
+                                ui.hyperlink_to("→", &url).on_hover_text("在浏览器打开");
+                                if ui.small_button("⎘").on_hover_text("复制链接").clicked() {
                                     if copy_text_to_clipboard(&url) {
                                         self.set_status_auto_clear(false, "已复制到剪贴板".to_string());
                                     }
@@ -742,11 +742,11 @@ impl eframe::App for AppState {
 
             ui.horizontal(|ui| {
                 let task_label = if uploading_count > 0 {
-                    format!("⏳ 传输任务 ({})", uploading_count)
+                    format!("⧗ 传输任务 ({})", uploading_count)
                 } else if failed_count > 0 {
-                    format!("❌ 传输任务 ({}失败)", failed_count)
+                    format!("✗ 传输任务 ({}失败)", failed_count)
                 } else {
-                    format!("📋 传输任务 ({})", self.tasks.len())
+                    format!("≡ 传输任务 ({})", self.tasks.len())
                 };
                 let task_selected = self.bottom_tab == BottomTab::Tasks;
                 if ui.selectable_label(task_selected, task_label).clicked() {
@@ -755,7 +755,7 @@ impl eframe::App for AppState {
 
                 ui.separator();
 
-                let hist_label = format!("🕓 上传历史 ({})", self.history.len());
+                let hist_label = format!("◷ 上传历史 ({})", self.history.len());
                 let hist_selected = self.bottom_tab == BottomTab::History;
                 if ui.selectable_label(hist_selected, hist_label).clicked() {
                     self.bottom_tab = BottomTab::History;
@@ -768,14 +768,14 @@ impl eframe::App for AppState {
                     match self.bottom_tab {
                         BottomTab::Tasks => {
                             if !self.tasks.is_empty() {
-                                if ui.small_button("🗑 清空").on_hover_text("移除所有已完成任务").clicked() {
+                                if ui.small_button("⊘ 清空").on_hover_text("移除所有已完成任务").clicked() {
                                     self.tasks.retain(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
                                 }
                             }
                         }
                         BottomTab::History => {
                             if !self.history.is_empty() {
-                                if ui.small_button("🗑 清空").clicked() {
+                                if ui.small_button("⊘ 清空").clicked() {
                                     if let Some(ref conn) = self.db {
                                         db_clear(conn);
                                     }
@@ -831,13 +831,13 @@ impl eframe::App for AppState {
                                                     ui.horizontal(|ui| {
                                                         // 时间戳
                                                         ui.label(egui::RichText::new(&task.created_at).small().weak());
-                                                        ui.label(egui::RichText::new("✅")
+                                                        ui.label(egui::RichText::new("✓")
                                                             .color(egui::Color32::from_rgb(80, 200, 120)));
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                             if ui.small_button("✕").on_hover_text("移除").clicked() {
                                                                 remove_id = Some(task.id);
                                                             }
-                                                            if ui.small_button("📋").on_hover_text("复制链接").clicked() {
+                                                            if ui.small_button("⎘").on_hover_text("复制链接").clicked() {
                                                                 copy_text_to_clipboard(url);
                                                                 // Note: can't call self methods in closure; set via remove_id pattern workaround
                                                             }
@@ -852,13 +852,13 @@ impl eframe::App for AppState {
                                                     ui.horizontal(|ui| {
                                                         // 时间戳
                                                         ui.label(egui::RichText::new(&task.created_at).small().weak());
-                                                        ui.label(egui::RichText::new("❌")
+                                                        ui.label(egui::RichText::new("✗")
                                                             .color(egui::Color32::from_rgb(220, 80, 80)));
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                             if ui.small_button("✕").on_hover_text("移除").clicked() {
                                                                 remove_id = Some(task.id);
                                                             }
-                                                            if ui.small_button("🔄 重试").clicked() {
+                                                            if ui.small_button("⟳ 重试").clicked() {
                                                                 retry_id = Some(task.id);
                                                             }
                                                         });
