@@ -12,11 +12,13 @@ use reqwest::blocking::Client;
 use reqwest::blocking::multipart;
 use global_hotkey::{GlobalHotKeyManager, GlobalHotKeyEvent, hotkey::{HotKey, Modifiers, Code}};
 use tray_icon::{TrayIconBuilder, Icon as TrayIconImg, menu::{Menu, MenuItem, PredefinedMenuItem}};
+use rusqlite::{Connection, params};
+use chrono::Local;
 
 // ── 消息类型（后台线程 → 主线程）──────────────────────────
 #[derive(Debug)]
 enum AppEvent {
-    UploadSuccess(String),
+    UploadSuccess(String, String), // (url, src)
     UploadError(String),
     TrayShowWindow,
     TrayUpload,
@@ -61,6 +63,80 @@ fn config_path() -> Option<std::path::PathBuf> {
         let _ = fs::create_dir_all(&dir);
         dir.join("config.yaml")
     })
+}
+
+fn data_dir() -> Option<std::path::PathBuf> {
+    ProjectDirs::from("com", "example", "RustClipboardUploader").map(|proj| {
+        let dir = proj.data_dir().to_path_buf();
+        let _ = fs::create_dir_all(&dir);
+        dir
+    })
+}
+
+fn db_path() -> Option<std::path::PathBuf> {
+    data_dir().map(|d| d.join("history.db"))
+}
+
+// ── 历史记录 ──────────────────────────────────────────────
+#[derive(Clone, Debug)]
+struct HistoryRecord {
+    id: i64,
+    url: String,
+    src: String,
+    uploaded_at: String,
+}
+
+fn open_db() -> Option<Connection> {
+    let path = db_path()?;
+    let conn = Connection::open(path).ok()?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            url         TEXT NOT NULL,
+            src         TEXT NOT NULL DEFAULT '',
+            uploaded_at TEXT NOT NULL
+        );"
+    ).ok()?;
+    Some(conn)
+}
+
+fn db_insert(url: &str, src: &str) {
+    if let Some(conn) = open_db() {
+        let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let _ = conn.execute(
+            "INSERT INTO history (url, src, uploaded_at) VALUES (?1, ?2, ?3)",
+            params![url, src, now],
+        );
+    }
+}
+
+fn db_load(limit: usize) -> Vec<HistoryRecord> {
+    open_db().map(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, url, src, uploaded_at FROM history ORDER BY id DESC LIMIT ?1"
+        ).ok()?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(HistoryRecord {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                src: row.get(2)?,
+                uploaded_at: row.get(3)?,
+            })
+        }).ok()?;
+        Some(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+    }).flatten().unwrap_or_default()
+}
+
+fn db_delete(id: i64) {
+    if let Some(conn) = open_db() {
+        let _ = conn.execute("DELETE FROM history WHERE id = ?1", params![id]);
+    }
+}
+
+fn db_clear() {
+    if let Some(conn) = open_db() {
+        let _ = conn.execute("DELETE FROM history", []);
+    }
 }
 
 fn load_config() -> Config {
@@ -124,8 +200,18 @@ fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
     }
 }
 
+/// 从响应中提取 src 字段（JSON 数组格式 [{"src":"...","url":"..."}]）
+fn extract_src_from_response(text: &str) -> String {
+    let j: serde_json::Value = serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
+    let root = if j.is_array() { j.get(0).unwrap_or(&j) } else { &j };
+    root.get("src")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 // ── 上传 ─────────────────────────────────────────────────
-fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<String> {
+fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<(String, String)> {
     let client = Client::new();
     let file_field = cfg.file_field.clone().unwrap_or_else(|| "file".to_string());
     let part = multipart::Part::bytes(img)
@@ -150,7 +236,9 @@ fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<String> {
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if status.is_success() {
-        return Ok(extract_url_from_response(cfg, &text).unwrap_or(text));
+        let url = extract_url_from_response(cfg, &text).unwrap_or_else(|| text.clone());
+        let src = extract_src_from_response(&text);
+        return Ok((url, src));
     }
     Err(anyhow::anyhow!("请求失败: {} — {}", status, text.trim()))
 }
@@ -234,14 +322,15 @@ fn do_upload(cfg: &Config, tx: &mpsc::Sender<AppEvent>) {
     match read_clipboard_image() {
         Some(img) => {
             match upload_image(cfg, img) {
-                Ok(url) => {
+                Ok((url, src)) => {
                     if cfg.copy_to_clipboard.unwrap_or(false) {
                         copy_text_to_clipboard(&url);
                     }
                     if cfg.notify_on_success.unwrap_or(false) {
                         send_notification("上传成功", &url);
                     }
-                    let _ = tx.send(AppEvent::UploadSuccess(url));
+                    db_insert(&url, &src);
+                    let _ = tx.send(AppEvent::UploadSuccess(url, src));
                 }
                 Err(e) => { let _ = tx.send(AppEvent::UploadError(format!("上传失败: {}", e))); }
             }
@@ -261,6 +350,8 @@ struct AppState {
     tx: mpsc::Sender<AppEvent>,
     watch_active: bool,
     quit_requested: bool,
+    history: Vec<HistoryRecord>,
+    history_open: bool,
 }
 
 impl AppState {
@@ -300,11 +391,12 @@ impl eframe::App for AppState {
         // 接收后台事件
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                AppEvent::UploadSuccess(url) => {
+                AppEvent::UploadSuccess(url, _src) => {
                     let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
                     let msg = if auto_copy { "上传成功，链接已复制".to_string() } else { "上传成功".to_string() };
                     self.status = Some((false, msg));
                     self.last_url = Some(url);
+                    self.history = db_load(50);
                     self.uploading = false;
                 }
                 AppEvent::UploadError(e) => {
@@ -458,6 +550,88 @@ impl eframe::App for AppState {
                     ui.hyperlink_to("🔗 在浏览器打开", &url);
                 });
             }
+
+            // ── 历史记录面板 ────────────────────────────────
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                let label = if self.history_open { "▼ 上传历史" } else { "▶ 上传历史" };
+                if ui.button(label).clicked() {
+                    self.history_open = !self.history_open;
+                    if self.history_open {
+                        self.history = db_load(50);
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if !self.history.is_empty() {
+                        if ui.small_button("🗑 清空").clicked() {
+                            db_clear();
+                            self.history.clear();
+                        }
+                    }
+                    ui.label(egui::RichText::new(format!("{} 条", self.history.len())).weak().small());
+                });
+            });
+
+            if self.history_open {
+                if self.history.is_empty() {
+                    ui.label(egui::RichText::new("暂无历史记录").weak().italics());
+                } else {
+                    let mut to_delete: Option<i64> = None;
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .id_salt("history_scroll")
+                        .show(ui, |ui| {
+                            for record in &self.history {
+                                ui.add_space(2.0);
+                                egui::Frame::default()
+                                    .fill(egui::Color32::from_gray(28))
+                                    .rounding(egui::Rounding::same(4.0))
+                                    .inner_margin(egui::Margin::same(6.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                egui::RichText::new(&record.uploaded_at)
+                                                    .small()
+                                                    .weak()
+                                            );
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                if ui.small_button("✕").clicked() {
+                                                    to_delete = Some(record.id);
+                                                }
+                                                if ui.small_button("📋").on_hover_text("复制链接").clicked() {
+                                                    copy_text_to_clipboard(&record.url);
+                                                    self.status = Some((false, "已复制到剪贴板".to_string()));
+                                                }
+                                            });
+                                        });
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&record.url)
+                                                    .monospace()
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(100, 200, 255))
+                                            ).wrap()
+                                        );
+                                        if !record.src.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new(format!("src: {}", record.src))
+                                                    .small()
+                                                    .weak()
+                                            );
+                                        }
+                                    });
+                            }
+                        });
+                    if let Some(id) = to_delete {
+                        db_delete(id);
+                        self.history.retain(|r| r.id != id);
+                    }
+                }
+            }
         });
     }
 
@@ -594,6 +768,8 @@ fn main() {
                 tx: tx_for_app.clone(),
                 watch_active,
                 quit_requested: false,
+                history: db_load(50),
+                history_open: false,
             };
             // 启动剪贴板监听后台线程
             app.start_watch_thread();
