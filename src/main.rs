@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use directories::ProjectDirs;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use arboard::Clipboard;
 use image::{ExtendedColorType, ImageEncoder};
 use reqwest::blocking::Client;
@@ -19,6 +19,7 @@ use chrono::Local;
 #[derive(Debug, Clone)]
 enum TaskStatus {
     Uploading,
+    Processing,              // 已上传，服务端处理中（如大模型命名）
     Success(String, String), // (url, src)
     Failed(String),          // error msg
 }
@@ -238,8 +239,8 @@ fn extract_src_from_response(text: &str) -> String {
         .to_string()
 }
 
-// ── 上传 ─────────────────────────────────────────────────
-fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<(String, String)> {
+// ── 上传：构建请求（不发送）────────────────────────────
+fn build_upload_request(cfg: &Config, img: Vec<u8>) -> Result<reqwest::blocking::RequestBuilder> {
     let client = Client::new();
     let file_field = cfg.file_field.clone().unwrap_or_else(|| "file".to_string());
     let part = multipart::Part::bytes(img)
@@ -260,7 +261,11 @@ fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<(String, String)> {
             }
         }
     }
-    let resp = req.multipart(form).send().context("发送请求失败")?;
+    Ok(req.multipart(form))
+}
+
+// ── 上传：解析响应 ────────────────────────────────────
+fn parse_upload_response(cfg: &Config, resp: reqwest::blocking::Response) -> Result<(String, String)> {
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if status.is_success() {
@@ -270,6 +275,7 @@ fn upload_image(cfg: &Config, img: Vec<u8>) -> Result<(String, String)> {
     }
     Err(anyhow::anyhow!("请求失败: {} — {}", status, text.trim()))
 }
+
 
 // ── 剪贴板写入 ───────────────────────────────────────────
 fn copy_text_to_clipboard(text: &str) -> bool {
@@ -346,9 +352,26 @@ fn parse_hotkey(s: &str) -> Option<HotKey> {
 
 // ── 执行上传，只发 TaskProgress（db_insert 在此线程自行 open_db）──
 fn do_upload_task(cfg: &Config, tx: &mpsc::Sender<AppEvent>, task_id: usize, img: Vec<u8>) {
-    match upload_image(cfg, img) {
+    // 1. 构建并发送请求（文件传输阶段）
+    let req = match build_upload_request(cfg, img) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Failed(format!("构建请求失败: {}", e))));
+            return;
+        }
+    };
+    let resp = match req.send() {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Failed(format!("发送请求失败: {}", e))));
+            return;
+        }
+    };
+    // 2. 文件已传完，服务端处理中（大模型命名等）
+    let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Processing));
+    // 3. 等待服务端返回（阻塞读取响应体）
+    match parse_upload_response(cfg, resp) {
         Ok((url, src)) => {
-            // 后台线程自己开连接写历史（Connection 非 Send）
             if let Some(conn) = open_db() {
                 db_insert(&conn, &url, &src);
             }
@@ -418,7 +441,7 @@ impl AppState {
     }
 
     fn trigger_upload(&mut self) {
-        let has_uploading = self.tasks.iter().any(|t| matches!(t.status, TaskStatus::Uploading));
+        let has_uploading = self.tasks.iter().any(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
         if has_uploading { return; }
         let img = match read_clipboard_image() {
             Some(d) => d,
@@ -531,6 +554,12 @@ impl eframe::App for AppState {
                                 t.status = TaskStatus::Uploading;
                             }
                         }
+                        TaskStatus::Processing => {
+                            if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                                t.status = TaskStatus::Processing;
+                                t.image_data = Vec::new(); // 文件已传完，释放内存
+                            }
+                        }
                     }
                 }
                 AppEvent::WatchUpload(img) => {
@@ -558,7 +587,7 @@ impl eframe::App for AppState {
         // 持续刷新以响应后台事件
         ctx.request_repaint_after(Duration::from_millis(200));
 
-        let has_uploading = self.tasks.iter().any(|t| matches!(t.status, TaskStatus::Uploading));
+        let has_uploading = self.tasks.iter().any(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("剪贴板上传工具");
@@ -708,7 +737,7 @@ impl eframe::App for AppState {
             ui.add_space(4.0);
 
             // ── 底部 Tab 栏：任务队列 | 上传历史 ───────────
-            let uploading_count = self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Uploading)).count();
+            let uploading_count = self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing)).count();
             let failed_count = self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Failed(_))).count();
 
             ui.horizontal(|ui| {
@@ -740,7 +769,7 @@ impl eframe::App for AppState {
                         BottomTab::Tasks => {
                             if !self.tasks.is_empty() {
                                 if ui.small_button("🗑 清空").on_hover_text("移除所有已完成任务").clicked() {
-                                    self.tasks.retain(|t| matches!(t.status, TaskStatus::Uploading));
+                                    self.tasks.retain(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
                                 }
                             }
                         }
@@ -782,11 +811,20 @@ impl eframe::App for AppState {
                                             match &task.status {
                                                 TaskStatus::Uploading => {
                                                     ui.horizontal(|ui| {
-                                                        // 时间戳
                                                         ui.label(egui::RichText::new(&task.created_at).small().weak());
                                                         ui.spinner();
                                                         ui.label(egui::RichText::new("上传中…")
                                                             .color(egui::Color32::from_rgb(200, 180, 80)));
+                                                    });
+                                                }
+                                                TaskStatus::Processing => {
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(egui::RichText::new(&task.created_at).small().weak());
+                                                        ui.spinner();
+                                                        ui.label(egui::RichText::new("处理中…")
+                                                            .color(egui::Color32::from_rgb(100, 180, 255)));
+                                                        ui.label(egui::RichText::new("(已上传，AI 命名中)")
+                                                            .small().weak());
                                                     });
                                                 }
                                                 TaskStatus::Success(url, _src) => {
