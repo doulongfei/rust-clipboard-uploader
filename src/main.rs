@@ -36,6 +36,7 @@ enum AppEvent {
     UploadSuccess(String, String), // (url, src)
     UploadError(String),
     TaskProgress(usize, TaskStatus), // (task_id, new_status)
+    WatchUpload(Vec<u8>),            // 监听线程捕获到新图片，主线程分配任务
     TrayShowWindow,
     TrayUpload,
     TrayToggleWatch,
@@ -386,26 +387,12 @@ fn do_upload_task(cfg: &Config, tx: &mpsc::Sender<AppEvent>, task_id: usize, img
     }
 }
 
-// ── 从剪贴板读取并上传（托盘/热键触发）──────────────────
-fn do_upload(cfg: &Config, tx: &mpsc::Sender<AppEvent>) {
-    match read_clipboard_image() {
-        Some(img) => {
-            match upload_image(cfg, img) {
-                Ok((url, src)) => {
-                    if cfg.copy_to_clipboard.unwrap_or(false) {
-                        copy_text_to_clipboard(&url);
-                    }
-                    if cfg.notify_on_success.unwrap_or(false) {
-                        send_notification("上传成功", &url);
-                    }
-                    db_insert(&url, &src);
-                    let _ = tx.send(AppEvent::UploadSuccess(url, src));
-                }
-                Err(e) => { let _ = tx.send(AppEvent::UploadError(format!("上传失败: {}", e))); }
-            }
-        }
-        None => { let _ = tx.send(AppEvent::UploadError("剪贴板中未检测到图片".to_string())); }
-    }
+
+// ── 底部 Tab ──────────────────────────────────────────────
+#[derive(Debug, Clone, PartialEq)]
+enum BottomTab {
+    Tasks,
+    History,
 }
 
 // ── 应用状态 ─────────────────────────────────────────────
@@ -420,15 +407,29 @@ struct AppState {
     watch_active: bool,
     quit_requested: bool,
     history: Vec<HistoryRecord>,
-    history_open: bool,
     tasks: Vec<UploadTask>,
     next_task_id: usize,
+    bottom_tab: BottomTab,
 }
 
 impl AppState {
+    /// 分配任务ID，推入队列，启动上传线程
+    fn spawn_task(&mut self, img: Vec<u8>) -> usize {
+        let task_id = self.next_task_id;
+        self.next_task_id += 1;
+        self.tasks.push(UploadTask {
+            id: task_id,
+            status: TaskStatus::Uploading,
+            image_data: img.clone(),
+        });
+        let cfg = self.config.clone();
+        let tx = self.tx.clone();
+        thread::spawn(move || do_upload_task(&cfg, &tx, task_id, img));
+        task_id
+    }
+
     fn trigger_upload(&mut self) {
         if self.uploading { return; }
-        // 从剪贴板读取图片
         let img = match read_clipboard_image() {
             Some(d) => d,
             None => {
@@ -439,18 +440,8 @@ impl AppState {
         self.uploading = true;
         self.status = None;
         self.last_url = None;
-
-        let task_id = self.next_task_id;
-        self.next_task_id += 1;
-        self.tasks.push(UploadTask {
-            id: task_id,
-            status: TaskStatus::Uploading,
-            image_data: img.clone(),
-        });
-
-        let cfg = self.config.clone();
-        let tx = self.tx.clone();
-        thread::spawn(move || do_upload_task(&cfg, &tx, task_id, img));
+        self.bottom_tab = BottomTab::Tasks;
+        self.spawn_task(img);
     }
 
     fn retry_task(&mut self, task_id: usize) {
@@ -458,7 +449,6 @@ impl AppState {
             Some(t) => t.image_data.clone(),
             None => return,
         };
-        // 更新任务状态为上传中
         if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             t.status = TaskStatus::Uploading;
         }
@@ -480,7 +470,8 @@ impl AppState {
                     let fp = image_fingerprint(&img);
                     if fp != last_fp {
                         last_fp = fp;
-                        do_upload(&cfg, &tx);
+                        // 发给主线程由主线程分配任务ID
+                        let _ = tx.send(AppEvent::WatchUpload(img));
                     }
                 }
             }
@@ -497,6 +488,11 @@ impl eframe::App for AppState {
                     if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
                         t.status = status;
                     }
+                }
+                AppEvent::WatchUpload(img) => {
+                    // 监听线程捕获到新图片，主线程分配任务ID并启动上传
+                    self.bottom_tab = BottomTab::Tasks;
+                    self.spawn_task(img);
                 }
                 AppEvent::UploadSuccess(url, _src) => {
                     let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
@@ -620,83 +616,6 @@ impl eframe::App for AppState {
             });
 
             ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(4.0);
-
-            // ── 任务队列 ─────────────────────────────────────
-            if !self.tasks.is_empty() {
-                ui.label(egui::RichText::new("上传队列").strong());
-                ui.add_space(2.0);
-
-                let mut retry_id: Option<usize> = None;
-                let mut remove_id: Option<usize> = None;
-
-                egui::ScrollArea::vertical()
-                    .max_height(120.0)
-                    .id_salt("task_scroll")
-                    .show(ui, |ui| {
-                        for task in self.tasks.iter() {
-                            egui::Frame::default()
-                                .fill(egui::Color32::from_gray(32))
-                                .rounding(egui::Rounding::same(4.0))
-                                .inner_margin(egui::Margin::same(6.0))
-                                .show(ui, |ui| {
-                                    ui.set_width(ui.available_width());
-                                    ui.horizontal(|ui| {
-                                        match &task.status {
-                                            TaskStatus::Uploading => {
-                                                ui.spinner();
-                                                ui.label(egui::RichText::new("上传中…").color(egui::Color32::from_rgb(200, 180, 80)));
-                                            }
-                                            TaskStatus::Success(url) => {
-                                                ui.label(egui::RichText::new("✅").color(egui::Color32::from_rgb(80, 200, 120)));
-                                                ui.add(egui::Label::new(
-                                                    egui::RichText::new(url).monospace().small()
-                                                        .color(egui::Color32::from_rgb(100, 200, 255))
-                                                ).wrap());
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    if ui.small_button("✕").on_hover_text("移除").clicked() {
-                                                        remove_id = Some(task.id);
-                                                    }
-                                                    if ui.small_button("📋").on_hover_text("复制链接").clicked() {
-                                                        copy_text_to_clipboard(url);
-                                                        self.status = Some((false, "已复制到剪贴板".to_string()));
-                                                    }
-                                                });
-                                            }
-                                            TaskStatus::Failed(err) => {
-                                                ui.label(egui::RichText::new("❌").color(egui::Color32::from_rgb(220, 80, 80)));
-                                                ui.add(egui::Label::new(
-                                                    egui::RichText::new(err).small()
-                                                        .color(egui::Color32::from_rgb(220, 120, 120))
-                                                ).wrap());
-                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                    if ui.small_button("✕").on_hover_text("移除").clicked() {
-                                                        remove_id = Some(task.id);
-                                                    }
-                                                    if ui.small_button("🔄 重试").clicked() {
-                                                        retry_id = Some(task.id);
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    });
-                                });
-                            ui.add_space(2.0);
-                        }
-                    });
-
-                if let Some(id) = remove_id {
-                    self.tasks.retain(|t| t.id != id);
-                }
-                if let Some(id) = retry_id {
-                    self.retry_task(id);
-                }
-
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(4.0);
-            }
 
             // ── 状态栏 ──────────────────────────────────────
             if let Some((is_err, msg)) = &self.status {
@@ -706,111 +625,206 @@ impl eframe::App for AppState {
                 ui.add_space(4.0);
             }
 
-            // ── 返回链接区 ──────────────────────────────────
+            // ── 最近上传链接（最后一次成功）────────────────
             if let Some(url) = self.last_url.clone() {
-                ui.label(egui::RichText::new("返回链接").strong());
-                ui.add_space(2.0);
                 egui::Frame::default()
                     .fill(egui::Color32::from_gray(30))
                     .rounding(egui::Rounding::same(4.0))
                     .inner_margin(egui::Margin::same(8.0))
                     .show(ui, |ui: &mut egui::Ui| {
                         ui.set_width(ui.available_width());
-                        ui.add(egui::Label::new(
-                            egui::RichText::new(&url).monospace().color(egui::Color32::from_rgb(100, 200, 255))
-                        ).wrap());
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Label::new(
+                                egui::RichText::new(&url).monospace().small().color(egui::Color32::from_rgb(100, 200, 255))
+                            ).wrap());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.hyperlink_to("🔗", &url).on_hover_text("在浏览器打开");
+                                if ui.small_button("📋").on_hover_text("复制链接").clicked() {
+                                    if copy_text_to_clipboard(&url) {
+                                        self.status = Some((false, "已复制到剪贴板".to_string()));
+                                    }
+                                }
+                            });
+                        });
                     });
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("📋 复制链接").clicked() {
-                        if copy_text_to_clipboard(&url) {
-                            self.status = Some((false, "已复制到剪贴板".to_string()));
-                        } else {
-                            self.status = Some((true, "复制失败".to_string()));
-                        }
-                    }
-                    ui.hyperlink_to("🔗 在浏览器打开", &url);
-                });
             }
 
-            // ── 历史记录面板 ────────────────────────────────
-            ui.add_space(6.0);
             ui.separator();
             ui.add_space(4.0);
 
+            // ── 底部 Tab 栏：任务队列 | 上传历史 ───────────
+            let uploading_count = self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Uploading)).count();
+            let failed_count = self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Failed(_))).count();
+
             ui.horizontal(|ui| {
-                let label = if self.history_open { "▼ 上传历史" } else { "▶ 上传历史" };
-                if ui.button(label).clicked() {
-                    self.history_open = !self.history_open;
-                    if self.history_open {
-                        self.history = db_load(50);
-                    }
+                // Tab: 传输任务
+                let task_label = if uploading_count > 0 {
+                    format!("⏳ 传输任务 ({})", uploading_count)
+                } else if failed_count > 0 {
+                    format!("❌ 传输任务 ({}失败)", failed_count)
+                } else {
+                    format!("📋 传输任务 ({})", self.tasks.len())
+                };
+                let task_selected = self.bottom_tab == BottomTab::Tasks;
+                if ui.selectable_label(task_selected, task_label).clicked() {
+                    self.bottom_tab = BottomTab::Tasks;
                 }
+
+                ui.separator();
+
+                // Tab: 上传历史
+                let hist_label = format!("🕓 上传历史 ({})", self.history.len());
+                let hist_selected = self.bottom_tab == BottomTab::History;
+                if ui.selectable_label(hist_selected, hist_label).clicked() {
+                    self.bottom_tab = BottomTab::History;
+                    self.history = db_load(50);
+                }
+
+                // 右侧操作按钮
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if !self.history.is_empty() {
-                        if ui.small_button("🗑 清空").clicked() {
-                            db_clear();
-                            self.history.clear();
+                    match self.bottom_tab {
+                        BottomTab::Tasks => {
+                            if !self.tasks.is_empty() {
+                                if ui.small_button("🗑 清空").on_hover_text("移除所有已完成任务").clicked() {
+                                    self.tasks.retain(|t| matches!(t.status, TaskStatus::Uploading));
+                                }
+                            }
+                        }
+                        BottomTab::History => {
+                            if !self.history.is_empty() {
+                                if ui.small_button("🗑 清空").clicked() {
+                                    db_clear();
+                                    self.history.clear();
+                                }
+                            }
                         }
                     }
-                    ui.label(egui::RichText::new(format!("{} 条", self.history.len())).weak().small());
                 });
             });
 
-            if self.history_open {
-                if self.history.is_empty() {
-                    ui.label(egui::RichText::new("暂无历史记录").weak().italics());
-                } else {
-                    let mut to_delete: Option<i64> = None;
-                    egui::ScrollArea::vertical()
-                        .max_height(200.0)
-                        .id_salt("history_scroll")
-                        .show(ui, |ui| {
-                            for record in &self.history {
-                                ui.add_space(2.0);
-                                egui::Frame::default()
-                                    .fill(egui::Color32::from_gray(28))
-                                    .rounding(egui::Rounding::same(4.0))
-                                    .inner_margin(egui::Margin::same(6.0))
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        ui.horizontal(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(&record.uploaded_at)
-                                                    .small()
-                                                    .weak()
-                                            );
-                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                                if ui.small_button("✕").clicked() {
-                                                    to_delete = Some(record.id);
+            ui.add_space(4.0);
+
+            // ── Tab 内容 ─────────────────────────────────────
+            match self.bottom_tab {
+                BottomTab::Tasks => {
+                    if self.tasks.is_empty() {
+                        ui.label(egui::RichText::new("暂无上传任务").weak().italics());
+                    } else {
+                        let mut retry_id: Option<usize> = None;
+                        let mut remove_id: Option<usize> = None;
+                        egui::ScrollArea::vertical()
+                            .max_height(220.0)
+                            .id_salt("task_scroll")
+                            .show(ui, |ui| {
+                                for task in self.tasks.iter().rev() {
+                                    egui::Frame::default()
+                                        .fill(egui::Color32::from_gray(32))
+                                        .rounding(egui::Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::same(6.0))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            match &task.status {
+                                                TaskStatus::Uploading => {
+                                                    ui.horizontal(|ui| {
+                                                        ui.spinner();
+                                                        ui.label(egui::RichText::new("上传中…")
+                                                            .color(egui::Color32::from_rgb(200, 180, 80)));
+                                                    });
                                                 }
-                                                if ui.small_button("📋").on_hover_text("复制链接").clicked() {
-                                                    copy_text_to_clipboard(&record.url);
-                                                    self.status = Some((false, "已复制到剪贴板".to_string()));
+                                                TaskStatus::Success(url) => {
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(egui::RichText::new("✅")
+                                                            .color(egui::Color32::from_rgb(80, 200, 120)));
+                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                            if ui.small_button("✕").on_hover_text("移除").clicked() {
+                                                                remove_id = Some(task.id);
+                                                            }
+                                                            if ui.small_button("📋").on_hover_text("复制链接").clicked() {
+                                                                copy_text_to_clipboard(url);
+                                                                self.status = Some((false, "已复制到剪贴板".to_string()));
+                                                            }
+                                                        });
+                                                    });
+                                                    ui.add(egui::Label::new(
+                                                        egui::RichText::new(url).monospace().small()
+                                                            .color(egui::Color32::from_rgb(100, 200, 255))
+                                                    ).wrap());
                                                 }
-                                            });
+                                                TaskStatus::Failed(err) => {
+                                                    ui.horizontal(|ui| {
+                                                        ui.label(egui::RichText::new("❌")
+                                                            .color(egui::Color32::from_rgb(220, 80, 80)));
+                                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                            if ui.small_button("✕").on_hover_text("移除").clicked() {
+                                                                remove_id = Some(task.id);
+                                                            }
+                                                            if ui.small_button("🔄 重试").clicked() {
+                                                                retry_id = Some(task.id);
+                                                            }
+                                                        });
+                                                    });
+                                                    ui.add(egui::Label::new(
+                                                        egui::RichText::new(err).small()
+                                                            .color(egui::Color32::from_rgb(220, 120, 120))
+                                                    ).wrap());
+                                                }
+                                            }
                                         });
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(&record.url)
-                                                    .monospace()
-                                                    .small()
+                                    ui.add_space(2.0);
+                                }
+                            });
+                        if let Some(id) = remove_id {
+                            self.tasks.retain(|t| t.id != id);
+                        }
+                        if let Some(id) = retry_id {
+                            self.retry_task(id);
+                        }
+                    }
+                }
+                BottomTab::History => {
+                    if self.history.is_empty() {
+                        ui.label(egui::RichText::new("暂无历史记录").weak().italics());
+                    } else {
+                        let mut to_delete: Option<i64> = None;
+                        egui::ScrollArea::vertical()
+                            .max_height(220.0)
+                            .id_salt("history_scroll")
+                            .show(ui, |ui| {
+                                for record in &self.history {
+                                    ui.add_space(2.0);
+                                    egui::Frame::default()
+                                        .fill(egui::Color32::from_gray(28))
+                                        .rounding(egui::Rounding::same(4.0))
+                                        .inner_margin(egui::Margin::same(6.0))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new(&record.uploaded_at).small().weak());
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if ui.small_button("✕").clicked() {
+                                                        to_delete = Some(record.id);
+                                                    }
+                                                    if ui.small_button("📋").on_hover_text("复制链接").clicked() {
+                                                        copy_text_to_clipboard(&record.url);
+                                                        self.status = Some((false, "已复制到剪贴板".to_string()));
+                                                    }
+                                                });
+                                            });
+                                            ui.add(egui::Label::new(
+                                                egui::RichText::new(&record.url).monospace().small()
                                                     .color(egui::Color32::from_rgb(100, 200, 255))
-                                            ).wrap()
-                                        );
-                                        if !record.src.is_empty() {
-                                            ui.label(
-                                                egui::RichText::new(format!("src: {}", record.src))
-                                                    .small()
-                                                    .weak()
-                                            );
-                                        }
-                                    });
-                            }
-                        });
-                    if let Some(id) = to_delete {
-                        db_delete(id);
-                        self.history.retain(|r| r.id != id);
+                                            ).wrap());
+                                            if !record.src.is_empty() {
+                                                ui.label(egui::RichText::new(format!("src: {}", record.src)).small().weak());
+                                            }
+                                        });
+                                }
+                            });
+                        if let Some(id) = to_delete {
+                            db_delete(id);
+                            self.history.retain(|r| r.id != id);
+                        }
                     }
                 }
             }
@@ -951,9 +965,9 @@ fn main() {
                 watch_active,
                 quit_requested: false,
                 history: db_load(50),
-                history_open: false,
                 tasks: Vec::new(),
                 next_task_id: 0,
+                bottom_tab: BottomTab::Tasks,
             };
             // 启动剪贴板监听后台线程
             app.start_watch_thread();
