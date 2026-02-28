@@ -17,12 +17,15 @@ jobs:
           - os: ubuntu-latest
             artifact: rust-clipboard-uploader-linux
             binary: target/release/rust-clipboard-uploader
+            release_name: rust-clipboard-uploader-linux
           - os: macos-latest
             artifact: rust-clipboard-uploader-macos
             binary: target/release/rust-clipboard-uploader
+            release_name: rust-clipboard-uploader-macos
           - os: windows-latest
             artifact: rust-clipboard-uploader-windows
             binary: target/release/rust-clipboard-uploader.exe
+            release_name: rust-clipboard-uploader-windows.exe
 
     steps:
       - name: Checkout
@@ -59,11 +62,17 @@ jobs:
       - name: Build
         run: cargo build --release
 
+      - name: Rename binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp ${{ matrix.binary }} dist/${{ matrix.release_name }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.binary }}
+          path: dist/${{ matrix.release_name }}
 
   release:
     name: Create Release
@@ -79,11 +88,14 @@ jobs:
         with:
           path: artifacts
 
+      - name: List artifacts
+        run: find artifacts -type f
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            artifacts/rust-clipboard-uploader-linux/rust-clipboard-uploader
-            artifacts/rust-clipboard-uploader-macos/rust-clipboard-uploader
-            artifacts/rust-clipboard-uploader-windows/rust-clipboard-uploader.exe
+            artifacts/rust-clipboard-uploader-linux/rust-clipboard-uploader-linux
+            artifacts/rust-clipboard-uploader-macos/rust-clipboard-uploader-macos
+            artifacts/rust-clipboard-uploader-windows/rust-clipboard-uploader-windows.exe
