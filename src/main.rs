@@ -798,7 +798,7 @@ impl eframe::App for AppState {
                         let mut retry_id: Option<usize> = None;
                         let mut remove_id: Option<usize> = None;
                         egui::ScrollArea::vertical()
-                            .max_height(220.0)
+                            
                             .id_salt("task_scroll")
                             .show(ui, |ui| {
                                 for task in self.tasks.iter().rev() {
@@ -887,7 +887,7 @@ impl eframe::App for AppState {
                     } else {
                         let mut to_delete: Option<i64> = None;
                         egui::ScrollArea::vertical()
-                            .max_height(220.0)
+                            
                             .id_salt("history_scroll")
                             .show(ui, |ui| {
                                 for record in &self.history {
