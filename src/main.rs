@@ -5,7 +5,7 @@ use directories::ProjectDirs;
 use anyhow::{Result, Context};
 
 use arboard::Clipboard;
-use image::{ColorType, ImageEncoder};
+use image::{ExtendedColorType, ImageEncoder};
 use reqwest::blocking::Client;
 use reqwest::blocking::multipart;
 
@@ -68,7 +68,7 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(&mut out);
     encoder
-        .write_image(&image.bytes, image.width as u32, image.height as u32, ColorType::Rgba8)
+        .write_image(&image.bytes, image.width as u32, image.height as u32, ExtendedColorType::Rgba8)
         .ok()?;
     Some(out)
 }
@@ -134,7 +134,7 @@ fn copy_text_to_clipboard(text: &str) -> bool {
         .is_ok()
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cfg = load_config();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -142,7 +142,7 @@ fn main() -> Result<()> {
             .with_title("剪贴板上传工具"),
         ..Default::default()
     };
-    eframe::run_native(
+    if let Err(e) = eframe::run_native(
         "剪贴板上传工具",
         options,
         Box::new(|_cc| {
@@ -152,8 +152,10 @@ fn main() -> Result<()> {
                 status: None,
             }))
         }),
-    )?;
-    Ok(())
+    ) {
+        eprintln!("启动失败: {e}");
+        std::process::exit(1);
+    }
 }
 
 struct AppState {
@@ -217,7 +219,6 @@ impl eframe::App for AppState {
                 if ui.button("📋 从剪贴板上传").clicked() {
                     match read_clipboard_image() {
                         Some(img) => {
-                            self.status = Some("⏳ 正在上传...".to_string());
                             match upload_image(&self.config, img) {
                                 Ok(url) => {
                                     let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
