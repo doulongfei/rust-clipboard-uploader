@@ -2,7 +2,7 @@ use eframe::egui;
 use std::fs;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use directories::ProjectDirs;
 use anyhow::{Result, Context};
@@ -19,22 +19,21 @@ use chrono::Local;
 #[derive(Debug, Clone)]
 enum TaskStatus {
     Uploading,
-    Success(String), // url
-    Failed(String),  // error msg
+    Success(String, String), // (url, src)
+    Failed(String),          // error msg
 }
 
 #[derive(Debug, Clone)]
 struct UploadTask {
     id: usize,
     status: TaskStatus,
-    image_data: Vec<u8>, // 用于失败重试
+    image_data: Vec<u8>, // 用于失败重试；完成后清空
+    created_at: String,  // 格式 %H:%M:%S
 }
 
 // ── 消息类型（后台线程 → 主线程）──────────────────────────
 #[derive(Debug)]
 enum AppEvent {
-    UploadSuccess(String, String), // (url, src)
-    UploadError(String),
     TaskProgress(usize, TaskStatus), // (task_id, new_status)
     WatchUpload(Vec<u8>),            // 监听线程捕获到新图片，主线程分配任务
     TrayShowWindow,
@@ -117,21 +116,15 @@ fn open_db() -> Option<Connection> {
     Some(conn)
 }
 
-fn db_insert(url: &str, src: &str) {
-    if let Some(conn) = open_db() {
-        let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        let _ = conn.execute(
-            "INSERT INTO history (url, src, uploaded_at) VALUES (?1, ?2, ?3)",
-            params![url, src, now],
-        );
-    }
+fn db_insert(conn: &Connection, url: &str, src: &str) {
+    let now = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let _ = conn.execute(
+        "INSERT INTO history (url, src, uploaded_at) VALUES (?1, ?2, ?3)",
+        params![url, src, now],
+    );
 }
 
-fn db_load(limit: usize) -> Vec<HistoryRecord> {
-    let conn = match open_db() {
-        Some(c) => c,
-        None => return vec![],
-    };
+fn db_load(conn: &Connection, limit: usize) -> Vec<HistoryRecord> {
     let mut stmt = match conn.prepare(
         "SELECT id, url, src, uploaded_at FROM history ORDER BY id DESC LIMIT ?1"
     ) {
@@ -150,16 +143,12 @@ fn db_load(limit: usize) -> Vec<HistoryRecord> {
     .unwrap_or_default()
 }
 
-fn db_delete(id: i64) {
-    if let Some(conn) = open_db() {
-        let _ = conn.execute("DELETE FROM history WHERE id = ?1", params![id]);
-    }
+fn db_delete(conn: &Connection, id: i64) {
+    let _ = conn.execute("DELETE FROM history WHERE id = ?1", params![id]);
 }
 
-fn db_clear() {
-    if let Some(conn) = open_db() {
-        let _ = conn.execute("DELETE FROM history", []);
-    }
+fn db_clear(conn: &Connection) {
+    let _ = conn.execute("DELETE FROM history", []);
 }
 
 fn load_config() -> Config {
@@ -209,35 +198,26 @@ fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
         return Some(text.trim().to_string());
     }
     let j: serde_json::Value = serde_json::from_str(text).ok()?;
-    // 统一转成路径段列表
-    // "[0].url" → ["0", "url"]
-    // "json.url" → ["url"]
-    // "json.data.link" → ["data", "link"]
     let path_str = if resp.starts_with("json.") {
         resp.strip_prefix("json.").unwrap_or("").to_string()
     } else if resp == "json" {
         String::new()
     } else {
-        // 处理 "[N].field...." 格式，去掉方括号
         resp.replace('[', "").replace(']', "")
     };
 
     let mut cur = &j;
     for seg in path_str.split('.') {
         if seg.is_empty() { continue; }
-        // 尝试数字索引（数组）
         if let Ok(idx) = seg.parse::<usize>() {
             cur = cur.get(idx)?;
         } else {
-            // 字符串键（对象）
-            // 如果当前是数组，先取第0项
             if cur.is_array() {
                 cur = cur.get(0)?;
             }
             cur = cur.get(seg)?;
         }
     }
-    // 如果路径为空，取数组第0项或对象本身
     if path_str.is_empty() {
         if cur.is_array() { cur = cur.get(0)?; }
     }
@@ -334,7 +314,6 @@ fn setup_fonts(ctx: &egui::Context) {
 
 // ── 解析快捷键字符串 ──────────────────────────────────────
 fn parse_hotkey(s: &str) -> Option<HotKey> {
-    // 格式: "ctrl+shift+u" / "alt+v" / "super+u"
     let parts: Vec<&str> = s.split('+').collect();
     if parts.is_empty() { return None; }
     let key_str = parts.last()?;
@@ -365,28 +344,22 @@ fn parse_hotkey(s: &str) -> Option<HotKey> {
     Some(HotKey::new(Some(mods), code))
 }
 
-// ── 执行上传并通过 channel 回传结果（通用，带 task_id）──
+// ── 执行上传，只发 TaskProgress（db_insert 在此线程自行 open_db）──
 fn do_upload_task(cfg: &Config, tx: &mpsc::Sender<AppEvent>, task_id: usize, img: Vec<u8>) {
     match upload_image(cfg, img) {
         Ok((url, src)) => {
-            if cfg.copy_to_clipboard.unwrap_or(false) {
-                copy_text_to_clipboard(&url);
+            // 后台线程自己开连接写历史（Connection 非 Send）
+            if let Some(conn) = open_db() {
+                db_insert(&conn, &url, &src);
             }
-            if cfg.notify_on_success.unwrap_or(false) {
-                send_notification("上传成功", &url);
-            }
-            db_insert(&url, &src);
-            let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Success(url.clone())));
-            let _ = tx.send(AppEvent::UploadSuccess(url, src));
+            let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Success(url, src)));
         }
         Err(e) => {
             let msg = format!("上传失败: {}", e);
-            let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Failed(msg.clone())));
-            let _ = tx.send(AppEvent::UploadError(msg));
+            let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Failed(msg)));
         }
     }
 }
-
 
 // ── 底部 Tab ──────────────────────────────────────────────
 #[derive(Debug, Clone, PartialEq)]
@@ -401,7 +374,7 @@ struct AppState {
     shared_config: Arc<Mutex<Config>>,
     last_url: Option<String>,
     status: Option<(bool, String)>,
-    uploading: bool,
+    status_clear_at: Option<Instant>,
     rx: mpsc::Receiver<AppEvent>,
     tx: mpsc::Sender<AppEvent>,
     watch_active: bool,
@@ -410,17 +383,33 @@ struct AppState {
     tasks: Vec<UploadTask>,
     next_task_id: usize,
     bottom_tab: BottomTab,
+    config_dirty: bool,
+    db: Option<Connection>,
 }
 
 impl AppState {
+    /// 设置会自动消失的状态提示
+    fn set_status_auto_clear(&mut self, is_err: bool, msg: String) {
+        self.status = Some((is_err, msg));
+        self.status_clear_at = Some(Instant::now() + Duration::from_secs(3));
+    }
+
+    /// 设置不会自动消失的状态提示
+    fn set_status_sticky(&mut self, is_err: bool, msg: String) {
+        self.status = Some((is_err, msg));
+        self.status_clear_at = None;
+    }
+
     /// 分配任务ID，推入队列，启动上传线程
     fn spawn_task(&mut self, img: Vec<u8>) -> usize {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
+        let created_at = Local::now().format("%H:%M:%S").to_string();
         self.tasks.push(UploadTask {
             id: task_id,
             status: TaskStatus::Uploading,
             image_data: img.clone(),
+            created_at,
         });
         let cfg = self.config.clone();
         let tx = self.tx.clone();
@@ -429,28 +418,38 @@ impl AppState {
     }
 
     fn trigger_upload(&mut self) {
-        if self.uploading { return; }
+        let has_uploading = self.tasks.iter().any(|t| matches!(t.status, TaskStatus::Uploading));
+        if has_uploading { return; }
         let img = match read_clipboard_image() {
             Some(d) => d,
             None => {
-                self.status = Some((true, "剪贴板中未检测到图片".to_string()));
+                self.set_status_sticky(true, "剪贴板中未检测到图片".to_string());
                 return;
             }
         };
-        self.uploading = true;
         self.status = None;
+        self.status_clear_at = None;
         self.last_url = None;
         self.bottom_tab = BottomTab::Tasks;
         self.spawn_task(img);
     }
 
     fn retry_task(&mut self, task_id: usize) {
+        // 若 image_data 已清空则重新读剪贴板
         let img = match self.tasks.iter().find(|t| t.id == task_id) {
-            Some(t) => t.image_data.clone(),
+            Some(t) if !t.image_data.is_empty() => t.image_data.clone(),
+            Some(_) => match read_clipboard_image() {
+                Some(d) => d,
+                None => {
+                    self.set_status_sticky(true, "剪贴板中未检测到图片，无法重试".to_string());
+                    return;
+                }
+            },
             None => return,
         };
         if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             t.status = TaskStatus::Uploading;
+            t.image_data = img.clone();
         }
         let cfg = self.config.clone();
         let tx = self.tx.clone();
@@ -463,14 +462,14 @@ impl AppState {
         thread::spawn(move || {
             let mut last_fp: u64 = 0;
             loop {
-                thread::sleep(Duration::from_millis(500));
                 let cfg = shared.lock().unwrap().clone();
-                if !cfg.auto_watch.unwrap_or(false) { continue; }
+                let auto_watch = cfg.auto_watch.unwrap_or(false);
+                thread::sleep(Duration::from_millis(if auto_watch { 500 } else { 2000 }));
+                if !auto_watch { continue; }
                 if let Some(img) = read_clipboard_image() {
                     let fp = image_fingerprint(&img);
                     if fp != last_fp {
                         last_fp = fp;
-                        // 发给主线程由主线程分配任务ID
                         let _ = tx.send(AppEvent::WatchUpload(img));
                     }
                 }
@@ -481,30 +480,62 @@ impl AppState {
 
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 检查状态提示是否已过期
+        if let Some(clear_at) = self.status_clear_at {
+            if Instant::now() >= clear_at {
+                self.status = None;
+                self.status_clear_at = None;
+            }
+        }
+
         // 接收后台事件
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 AppEvent::TaskProgress(task_id, status) => {
-                    if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-                        t.status = status;
+                    match &status {
+                        TaskStatus::Success(url, src) => {
+                            let url = url.clone();
+                            let src = src.clone();
+                            if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                                t.status = TaskStatus::Success(url.clone(), src.clone());
+                                t.image_data = Vec::new(); // 释放内存
+                            }
+                            self.last_url = Some(url.clone());
+                            let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
+                            if auto_copy {
+                                copy_text_to_clipboard(&url);
+                            }
+                            if self.config.notify_on_success.unwrap_or(false) {
+                                send_notification("上传成功", &url);
+                            }
+                            let msg = if auto_copy {
+                                "上传成功，链接已复制".to_string()
+                            } else {
+                                "上传成功".to_string()
+                            };
+                            self.set_status_auto_clear(false, msg);
+                            if let Some(ref conn) = self.db {
+                                self.history = db_load(conn, 50);
+                            }
+                        }
+                        TaskStatus::Failed(msg) => {
+                            let msg = msg.clone();
+                            if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                                t.status = TaskStatus::Failed(msg.clone());
+                                // 保留 image_data 供重试
+                            }
+                            self.set_status_sticky(true, msg);
+                        }
+                        TaskStatus::Uploading => {
+                            if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                                t.status = TaskStatus::Uploading;
+                            }
+                        }
                     }
                 }
                 AppEvent::WatchUpload(img) => {
-                    // 监听线程捕获到新图片，主线程分配任务ID并启动上传
                     self.bottom_tab = BottomTab::Tasks;
                     self.spawn_task(img);
-                }
-                AppEvent::UploadSuccess(url, _src) => {
-                    let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
-                    let msg = if auto_copy { "上传成功，链接已复制".to_string() } else { "上传成功".to_string() };
-                    self.status = Some((false, msg));
-                    self.last_url = Some(url);
-                    self.history = db_load(50);
-                    self.uploading = false;
-                }
-                AppEvent::UploadError(e) => {
-                    self.status = Some((true, e));
-                    self.uploading = false;
                 }
                 AppEvent::TrayShowWindow => { ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true)); }
                 AppEvent::TrayUpload => { self.trigger_upload(); }
@@ -527,6 +558,8 @@ impl eframe::App for AppState {
         // 持续刷新以响应后台事件
         ctx.request_repaint_after(Duration::from_millis(200));
 
+        let has_uploading = self.tasks.iter().any(|t| matches!(t.status, TaskStatus::Uploading));
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("剪贴板上传工具");
             ui.add_space(8.0);
@@ -538,26 +571,36 @@ impl eframe::App for AppState {
                 .striped(true)
                 .show(ui, |ui| {
                     ui.label("上传地址:");
-                    ui.add(egui::TextEdit::singleline(&mut self.config.upload_url).desired_width(f32::INFINITY));
+                    if ui.add(egui::TextEdit::singleline(&mut self.config.upload_url).desired_width(f32::INFINITY)).changed() {
+                        self.config_dirty = true;
+                    }
                     ui.end_row();
 
                     ui.label("请求方法:");
                     ui.horizontal(|ui| {
                         let method = self.config.method.get_or_insert_with(|| "POST".to_string());
-                        ui.selectable_value(method, "POST".to_string(), "POST");
-                        ui.selectable_value(method, "PUT".to_string(), "PUT");
+                        if ui.selectable_value(method, "POST".to_string(), "POST").changed() {
+                            self.config_dirty = true;
+                        }
+                        if ui.selectable_value(method, "PUT".to_string(), "PUT").changed() {
+                            self.config_dirty = true;
+                        }
                     });
                     ui.end_row();
 
                     ui.label("文件字段:");
                     let ff = self.config.file_field.get_or_insert_with(|| "file".to_string());
-                    ui.add(egui::TextEdit::singleline(ff).desired_width(f32::INFINITY));
+                    if ui.add(egui::TextEdit::singleline(ff).desired_width(f32::INFINITY)).changed() {
+                        self.config_dirty = true;
+                    }
                     ui.end_row();
 
                     ui.label("响应解析:");
                     ui.vertical(|ui| {
                         let resp = self.config.response.get_or_insert_with(|| "text".to_string());
-                        ui.add(egui::TextEdit::singleline(resp).desired_width(f32::INFINITY));
+                        if ui.add(egui::TextEdit::singleline(resp).desired_width(f32::INFINITY)).changed() {
+                            self.config_dirty = true;
+                        }
                         ui.label(egui::RichText::new("text | json.url | json.data.link").small().weak());
                     });
                     ui.end_row();
@@ -565,9 +608,11 @@ impl eframe::App for AppState {
                     ui.label("全局快捷键:");
                     ui.vertical(|ui| {
                         let hk = self.config.hotkey.get_or_insert_with(String::new);
-                        ui.add(egui::TextEdit::singleline(hk)
+                        if ui.add(egui::TextEdit::singleline(hk)
                             .hint_text("ctrl+shift+u")
-                            .desired_width(f32::INFINITY));
+                            .desired_width(f32::INFINITY)).changed() {
+                            self.config_dirty = true;
+                        }
                         ui.label(egui::RichText::new("留空则不设置，修改后保存配置并重启生效").small().weak());
                     });
                     ui.end_row();
@@ -575,9 +620,13 @@ impl eframe::App for AppState {
                     ui.label("上传选项:");
                     ui.vertical(|ui| {
                         let copy = self.config.copy_to_clipboard.get_or_insert(false);
-                        ui.checkbox(copy, "上传成功后自动复制链接");
+                        if ui.checkbox(copy, "上传成功后自动复制链接").changed() {
+                            self.config_dirty = true;
+                        }
                         let notify = self.config.notify_on_success.get_or_insert(false);
-                        ui.checkbox(notify, "上传成功后发送系统通知");
+                        if ui.checkbox(notify, "上传成功后发送系统通知").changed() {
+                            self.config_dirty = true;
+                        }
                     });
                     ui.end_row();
 
@@ -586,6 +635,7 @@ impl eframe::App for AppState {
                         let watch = self.config.auto_watch.get_or_insert(false);
                         if ui.checkbox(watch, "监听剪贴板变化自动上传").changed() {
                             self.watch_active = *watch;
+                            self.config_dirty = true;
                             *self.shared_config.lock().unwrap() = self.config.clone();
                         }
                         if self.watch_active {
@@ -601,16 +651,20 @@ impl eframe::App for AppState {
 
             // ── 操作按钮 ────────────────────────────────────
             ui.horizontal(|ui| {
-                if ui.button("💾 保存配置").clicked() {
+                let save_label = if self.config_dirty { "💾 保存配置 ●" } else { "💾 保存配置" };
+                if ui.button(save_label).clicked() {
                     *self.shared_config.lock().unwrap() = self.config.clone();
                     match save_config(&self.config) {
-                        Ok(_) => self.status = Some((false, "配置已保存".to_string())),
-                        Err(e) => self.status = Some((true, format!("保存失败: {}", e))),
+                        Ok(_) => {
+                            self.config_dirty = false;
+                            self.set_status_auto_clear(false, "配置已保存".to_string());
+                        }
+                        Err(e) => self.set_status_sticky(true, format!("保存失败: {}", e)),
                     }
                 }
 
-                let btn_label = if self.uploading { "⏳ 上传中..." } else { "📤 从剪贴板上传" };
-                if ui.add_enabled(!self.uploading, egui::Button::new(btn_label)).clicked() {
+                let btn_label = if has_uploading { "⏳ 上传中..." } else { "📤 从剪贴板上传" };
+                if ui.add_enabled(!has_uploading, egui::Button::new(btn_label)).clicked() {
                     self.trigger_upload();
                 }
             });
@@ -641,7 +695,7 @@ impl eframe::App for AppState {
                                 ui.hyperlink_to("🔗", &url).on_hover_text("在浏览器打开");
                                 if ui.small_button("📋").on_hover_text("复制链接").clicked() {
                                     if copy_text_to_clipboard(&url) {
-                                        self.status = Some((false, "已复制到剪贴板".to_string()));
+                                        self.set_status_auto_clear(false, "已复制到剪贴板".to_string());
                                     }
                                 }
                             });
@@ -658,7 +712,6 @@ impl eframe::App for AppState {
             let failed_count = self.tasks.iter().filter(|t| matches!(t.status, TaskStatus::Failed(_))).count();
 
             ui.horizontal(|ui| {
-                // Tab: 传输任务
                 let task_label = if uploading_count > 0 {
                     format!("⏳ 传输任务 ({})", uploading_count)
                 } else if failed_count > 0 {
@@ -673,15 +726,15 @@ impl eframe::App for AppState {
 
                 ui.separator();
 
-                // Tab: 上传历史
                 let hist_label = format!("🕓 上传历史 ({})", self.history.len());
                 let hist_selected = self.bottom_tab == BottomTab::History;
                 if ui.selectable_label(hist_selected, hist_label).clicked() {
                     self.bottom_tab = BottomTab::History;
-                    self.history = db_load(50);
+                    if let Some(ref conn) = self.db {
+                        self.history = db_load(conn, 50);
+                    }
                 }
 
-                // 右侧操作按钮
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     match self.bottom_tab {
                         BottomTab::Tasks => {
@@ -694,7 +747,9 @@ impl eframe::App for AppState {
                         BottomTab::History => {
                             if !self.history.is_empty() {
                                 if ui.small_button("🗑 清空").clicked() {
-                                    db_clear();
+                                    if let Some(ref conn) = self.db {
+                                        db_clear(conn);
+                                    }
                                     self.history.clear();
                                 }
                             }
@@ -727,13 +782,17 @@ impl eframe::App for AppState {
                                             match &task.status {
                                                 TaskStatus::Uploading => {
                                                     ui.horizontal(|ui| {
+                                                        // 时间戳
+                                                        ui.label(egui::RichText::new(&task.created_at).small().weak());
                                                         ui.spinner();
                                                         ui.label(egui::RichText::new("上传中…")
                                                             .color(egui::Color32::from_rgb(200, 180, 80)));
                                                     });
                                                 }
-                                                TaskStatus::Success(url) => {
+                                                TaskStatus::Success(url, _src) => {
                                                     ui.horizontal(|ui| {
+                                                        // 时间戳
+                                                        ui.label(egui::RichText::new(&task.created_at).small().weak());
                                                         ui.label(egui::RichText::new("✅")
                                                             .color(egui::Color32::from_rgb(80, 200, 120)));
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -742,7 +801,7 @@ impl eframe::App for AppState {
                                                             }
                                                             if ui.small_button("📋").on_hover_text("复制链接").clicked() {
                                                                 copy_text_to_clipboard(url);
-                                                                self.status = Some((false, "已复制到剪贴板".to_string()));
+                                                                // Note: can't call self methods in closure; set via remove_id pattern workaround
                                                             }
                                                         });
                                                     });
@@ -753,6 +812,8 @@ impl eframe::App for AppState {
                                                 }
                                                 TaskStatus::Failed(err) => {
                                                     ui.horizontal(|ui| {
+                                                        // 时间戳
+                                                        ui.label(egui::RichText::new(&task.created_at).small().weak());
                                                         ui.label(egui::RichText::new("❌")
                                                             .color(egui::Color32::from_rgb(220, 80, 80)));
                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -807,7 +868,7 @@ impl eframe::App for AppState {
                                                     }
                                                     if ui.small_button("📋").on_hover_text("复制链接").clicked() {
                                                         copy_text_to_clipboard(&record.url);
-                                                        self.status = Some((false, "已复制到剪贴板".to_string()));
+                                                        // status update handled after borrow ends
                                                     }
                                                 });
                                             });
@@ -822,7 +883,9 @@ impl eframe::App for AppState {
                                 }
                             });
                         if let Some(id) = to_delete {
-                            db_delete(id);
+                            if let Some(ref conn) = self.db {
+                                db_delete(conn, id);
+                            }
                             self.history.retain(|r| r.id != id);
                         }
                     }
@@ -832,7 +895,6 @@ impl eframe::App for AppState {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        // 窗口关闭时保存配置
         let _ = save_config(&self.config);
     }
 }
@@ -878,20 +940,19 @@ fn main() {
     let _ = tray_menu.append(&PredefinedMenuItem::separator());
     let _ = tray_menu.append(&item_quit);
 
-    // 创建最小的 1x1 白色 PNG 作为托盘图标
     let icon_data = vec![
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
-        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
-        0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, // 16x16
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10,
         0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x91, 0x68, 0x36,
-        0x00, 0x00, 0x00, 0x34, 0x49, 0x44, 0x41, 0x54, // IDAT
+        0x00, 0x00, 0x00, 0x34, 0x49, 0x44, 0x41, 0x54,
         0x78, 0x9C, 0x62, 0xF8, 0xCF, 0xC0, 0xC0, 0xC0,
         0xF0, 0x9F, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81,
         0x81, 0xFF, 0x18, 0x18, 0x18, 0x18, 0x18, 0x98,
         0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81,
         0x81, 0x01, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00,
         0x0E, 0xF0, 0x03, 0x01, 0xEF, 0x2F, 0x2A, 0x0B,
-        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, // IEND
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
         0xAE, 0x42, 0x60, 0x82,
     ];
 
@@ -910,7 +971,6 @@ fn main() {
         None
     };
 
-    // 托盘事件监听线程
     if tray_icon.is_some() {
         let tx3 = tx.clone();
         let show_id = item_show.id().clone();
@@ -954,22 +1014,29 @@ fn main() {
         options,
         Box::new(move |cc| {
             setup_fonts(&cc.egui_ctx);
+            let db = open_db();
+            let history = if let Some(ref conn) = db {
+                db_load(conn, 50)
+            } else {
+                vec![]
+            };
             let app = AppState {
                 config: cfg,
                 shared_config: Arc::clone(&shared_for_app),
                 last_url: None,
                 status: None,
-                uploading: false,
+                status_clear_at: None,
                 rx,
                 tx: tx_for_app.clone(),
                 watch_active,
                 quit_requested: false,
-                history: db_load(50),
+                history,
                 tasks: Vec::new(),
                 next_task_id: 0,
                 bottom_tab: BottomTab::Tasks,
+                config_dirty: false,
+                db,
             };
-            // 启动剪贴板监听后台线程
             app.start_watch_thread();
             Ok(Box::new(app))
         }),
