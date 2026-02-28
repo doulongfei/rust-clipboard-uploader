@@ -134,6 +134,50 @@ fn copy_text_to_clipboard(text: &str) -> bool {
         .is_ok()
 }
 
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // 按平台尝试加载系统中文字体
+    let candidates: &[&str] = &[
+        // macOS
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Light.ttc",
+        "/Library/Fonts/Arial Unicode MS.ttf",
+        // Linux
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "/usr/share/fonts/truetype/arphic/uming.ttc",
+        // Windows
+        "C:\\Windows\\Fonts\\msyh.ttc",
+        "C:\\Windows\\Fonts\\simsun.ttc",
+    ];
+
+    for path in candidates {
+        if let Ok(data) = std::fs::read(path) {
+            fonts.font_data.insert(
+                "cjk".to_owned(),
+                egui::FontData::from_owned(data).into(),
+            );
+            // 将中文字体加到 Proportional 和 Monospace 的最高优先级
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Proportional)
+                .unwrap()
+                .insert(0, "cjk".to_owned());
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Monospace)
+                .unwrap()
+                .push("cjk".to_owned());
+            break;
+        }
+    }
+
+    ctx.set_fonts(fonts);
+}
+
 fn main() {
     let cfg = load_config();
     let options = eframe::NativeOptions {
@@ -145,7 +189,8 @@ fn main() {
     if let Err(e) = eframe::run_native(
         "剪贴板上传工具",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            setup_fonts(&cc.egui_ctx);
             Ok(Box::new(AppState {
                 config: cfg,
                 last_url: None,
