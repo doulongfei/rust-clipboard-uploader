@@ -1,9 +1,0 @@
-/home/wave001/.openclaw/workspace/rust-clipboard-uploader/target/debug/deps/global_hotkey-55d41884ac23ca1b.d: /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/lib.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/error.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/hotkey.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/mod.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/x11/mod.rs
-
-/home/wave001/.openclaw/workspace/rust-clipboard-uploader/target/debug/deps/libglobal_hotkey-55d41884ac23ca1b.rmeta: /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/lib.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/error.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/hotkey.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/mod.rs /home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/x11/mod.rs
-
-/home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/lib.rs:
-/home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/error.rs:
-/home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/hotkey.rs:
-/home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/mod.rs:
-/home/wave001/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/global-hotkey-0.6.4/src/platform_impl/x11/mod.rs:
