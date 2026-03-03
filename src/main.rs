@@ -1,6 +1,7 @@
 use eframe::egui;
 use std::fs;
 use std::sync::{Arc, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
@@ -28,8 +29,9 @@ enum TaskStatus {
 struct UploadTask {
     id: usize,
     status: TaskStatus,
-    image_data: Vec<u8>, // 用于失败重试；完成后清空
-    created_at: String,  // 格式 %H:%M:%S
+    image_data: Vec<u8>,        // 用于失败重试；完成后清空
+    created_at: String,          // 格式 %H:%M:%S
+    data_expires_at: Option<Instant>, // 失败任务图片数据过期时间（5分钟后自动释放）
 }
 
 // ── 消息类型（后台线程 → 主线程）──────────────────────────
@@ -187,6 +189,13 @@ fn image_fingerprint(data: &[u8]) -> u64 {
     len ^ (prefix.wrapping_mul(0x9e3779b97f4a7c15))
 }
 
+/// 轻量剪贴板指纹：只读原始 RGBA bytes 做指纹，不做 PNG 编码，避免高频内存分配
+fn clipboard_raw_fingerprint() -> Option<u64> {
+    let mut cb = Clipboard::new().ok()?;
+    let img = cb.get_image().ok()?;
+    Some(image_fingerprint(&img.bytes))
+}
+
 // ── 响应解析 ─────────────────────────────────────────────
 /// 支持路径格式：
 ///   "text"          → 原始文本
@@ -240,8 +249,7 @@ fn extract_src_from_response(text: &str) -> String {
 }
 
 // ── 上传：构建请求（不发送）────────────────────────────
-fn build_upload_request(cfg: &Config, img: Vec<u8>) -> Result<reqwest::blocking::RequestBuilder> {
-    let client = Client::new();
+fn build_upload_request(client: &Client, cfg: &Config, img: Vec<u8>) -> Result<reqwest::blocking::RequestBuilder> {
     let file_field = cfg.file_field.clone().unwrap_or_else(|| "file".to_string());
     let part = multipart::Part::bytes(img)
         .file_name("screenshot.png")
@@ -364,9 +372,9 @@ fn parse_hotkey(s: &str) -> Option<HotKey> {
 }
 
 // ── 执行上传，只发 TaskProgress（db_insert 在此线程自行 open_db）──
-fn do_upload_task(cfg: &Config, tx: &mpsc::Sender<AppEvent>, task_id: usize, img: Vec<u8>) {
+fn do_upload_task(client: &Client, cfg: &Config, tx: &mpsc::Sender<AppEvent>, task_id: usize, img: Vec<u8>) {
     // 1. 构建并发送请求（文件传输阶段）
-    let req = match build_upload_request(cfg, img) {
+    let req = match build_upload_request(client, cfg, img) {
         Ok(r) => r,
         Err(e) => {
             let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Failed(format!("构建请求失败: {}", e))));
@@ -421,6 +429,8 @@ struct AppState {
     bottom_tab: BottomTab,
     config_dirty: bool,
     db: Option<Connection>,
+    http_client: Arc<Client>,        // 复用的 HTTP 客户端
+    watch_stop: Arc<AtomicBool>,     // watch 线程优雅退出信号
 }
 
 impl AppState {
@@ -446,10 +456,12 @@ impl AppState {
             status: TaskStatus::Uploading,
             image_data: img.clone(),
             created_at,
+            data_expires_at: Some(Instant::now() + Duration::from_secs(300)), // 5分钟后过期
         });
         let cfg = self.config.clone();
         let tx = self.tx.clone();
-        thread::spawn(move || do_upload_task(&cfg, &tx, task_id, img));
+        let client = Arc::clone(&self.http_client);
+        thread::spawn(move || do_upload_task(&client, &cfg, &tx, task_id, img));
         task_id
     }
 
@@ -486,27 +498,34 @@ impl AppState {
         if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             t.status = TaskStatus::Uploading;
             t.image_data = img.clone();
+            t.data_expires_at = Some(Instant::now() + Duration::from_secs(300));
         }
         let cfg = self.config.clone();
         let tx = self.tx.clone();
-        thread::spawn(move || do_upload_task(&cfg, &tx, task_id, img));
+        let client = Arc::clone(&self.http_client);
+        thread::spawn(move || do_upload_task(&client, &cfg, &tx, task_id, img));
     }
 
-    fn start_watch_thread(&self) {
+    fn start_watch_thread(&self, ctx: egui::Context) {
         let tx = self.tx.clone();
         let shared = Arc::clone(&self.shared_config);
+        let stop = Arc::clone(&self.watch_stop);
         thread::spawn(move || {
             let mut last_fp: u64 = 0;
-            loop {
+            while !stop.load(Ordering::Relaxed) {
                 let cfg = shared.lock().unwrap().clone();
                 let auto_watch = cfg.auto_watch.unwrap_or(false);
                 thread::sleep(Duration::from_millis(if auto_watch { 500 } else { 2000 }));
                 if !auto_watch { continue; }
-                if let Some(img) = read_clipboard_image() {
-                    let fp = image_fingerprint(&img);
+                // 轻量指纹检查：只读原始 RGBA bytes，不做 PNG 编码
+                if let Some(fp) = clipboard_raw_fingerprint() {
                     if fp != last_fp {
                         last_fp = fp;
-                        let _ = tx.send(AppEvent::WatchUpload(img));
+                        // 指纹变了，才做完整 PNG 编码
+                        if let Some(img) = read_clipboard_image() {
+                            let _ = tx.send(AppEvent::WatchUpload(img));
+                            ctx.request_repaint(); // 主动触发 UI 刷新
+                        }
                     }
                 }
             }
@@ -521,6 +540,16 @@ impl eframe::App for AppState {
             if Instant::now() >= clear_at {
                 self.status = None;
                 self.status_clear_at = None;
+            }
+        }
+
+        // 清理过期的失败任务图片数据（释放内存）
+        for task in self.tasks.iter_mut() {
+            if let Some(exp) = task.data_expires_at {
+                if Instant::now() > exp && !task.image_data.is_empty() {
+                    task.image_data = Vec::new();
+                    task.data_expires_at = None;
+                }
             }
         }
 
@@ -597,10 +626,14 @@ impl eframe::App for AppState {
             return;
         }
 
-        // 持续刷新以响应后台事件
-        ctx.request_repaint_after(Duration::from_millis(200));
-
         let has_uploading = self.tasks.iter().any(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
+
+        // 智能降频：有任务时快速刷新，空闲时大幅降频（靠后台事件 ctx.request_repaint() 驱动）
+        if has_uploading || self.status_clear_at.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(200));
+        } else {
+            ctx.request_repaint_after(Duration::from_secs(2));
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("剪贴板上传工具");
@@ -946,6 +979,7 @@ impl eframe::App for AppState {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.watch_stop.store(true, Ordering::Relaxed);
         let _ = save_config(&self.config);
     }
 }
@@ -1060,6 +1094,17 @@ fn main() {
     let shared_for_app = Arc::clone(&shared_config);
     let tx_for_app = tx.clone();
 
+    // 创建共享 HTTP 客户端（全局复用，避免每次上传都新建连接池）
+    let http_client = Arc::new(
+        Client::builder()
+            .timeout(Duration::from_secs(90))
+            .pool_max_idle_per_host(2)
+            .pool_idle_timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| Client::new())
+    );
+    let watch_stop = Arc::new(AtomicBool::new(false));
+
     if let Err(e) = eframe::run_native(
         "剪贴板上传工具",
         options,
@@ -1087,8 +1132,10 @@ fn main() {
                 bottom_tab: BottomTab::Tasks,
                 config_dirty: false,
                 db,
+                http_client,
+                watch_stop,
             };
-            app.start_watch_thread();
+            app.start_watch_thread(cc.egui_ctx.clone());
             Ok(Box::new(app))
         }),
     ) {
