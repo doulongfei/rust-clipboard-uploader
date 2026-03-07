@@ -8,12 +8,14 @@ use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager,
 };
 use image::{ExtendedColorType, ImageEncoder};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypePNG, NSPasteboardTypeTIFF};
 use reqwest::blocking::multipart;
 use reqwest::blocking::Client;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -152,6 +154,13 @@ impl Default for Config {
 }
 
 const AUTO_RETRY_MAX_RETRIES: u8 = 2;
+const WATCH_POLL_BUSY_MS: u64 = 500;
+const WATCH_POLL_WARM_MS: u64 = 1_000;
+const WATCH_POLL_IDLE_MS: u64 = 2_000;
+const WATCH_POLL_DEEP_IDLE_MS: u64 = 5_000;
+const WATCH_POLL_WARM_AFTER: Duration = Duration::from_secs(10);
+const WATCH_POLL_IDLE_AFTER: Duration = Duration::from_secs(60);
+const WATCH_POLL_DEEP_IDLE_AFTER: Duration = Duration::from_secs(300);
 
 fn auto_retry_enabled(config: &Config) -> bool {
     config.auto_retry.unwrap_or(true)
@@ -170,6 +179,20 @@ fn task_is_active(status: &TaskStatus) -> bool {
         status,
         TaskStatus::Uploading | TaskStatus::Processing | TaskStatus::Retrying { .. }
     )
+}
+
+fn watch_poll_interval(auto_watch: bool, idle_for: Duration, has_active_tasks: bool) -> Duration {
+    if !auto_watch {
+        Duration::from_millis(WATCH_POLL_IDLE_MS)
+    } else if has_active_tasks || idle_for < WATCH_POLL_WARM_AFTER {
+        Duration::from_millis(WATCH_POLL_BUSY_MS)
+    } else if idle_for < WATCH_POLL_IDLE_AFTER {
+        Duration::from_millis(WATCH_POLL_WARM_MS)
+    } else if idle_for < WATCH_POLL_DEEP_IDLE_AFTER {
+        Duration::from_millis(WATCH_POLL_IDLE_MS)
+    } else {
+        Duration::from_millis(WATCH_POLL_DEEP_IDLE_MS)
+    }
 }
 
 fn show_main_window(ctx: &egui::Context) {
@@ -300,6 +323,7 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
     Some(out)
 }
 
+#[cfg(not(target_os = "macos"))]
 /// 图片内容的简单指纹（长度 + 前64字节）
 fn image_fingerprint(data: &[u8]) -> u64 {
     let len = data.len() as u64;
@@ -311,11 +335,24 @@ fn image_fingerprint(data: &[u8]) -> u64 {
     len ^ (prefix.wrapping_mul(0x9e3779b97f4a7c15))
 }
 
+#[cfg(not(target_os = "macos"))]
 /// 轻量剪贴板指纹：只读原始 RGBA bytes 做指纹，不做 PNG 编码，避免高频内存分配
 fn clipboard_raw_fingerprint() -> Option<u64> {
     let mut cb = Clipboard::new().ok()?;
     let img = cb.get_image().ok()?;
     Some(image_fingerprint(&img.bytes))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_clipboard_change_info() -> Option<(i64, bool)> {
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
+    let change_count = unsafe { pasteboard.changeCount() } as i64;
+    let has_image = unsafe { pasteboard.types() }.is_some_and(|types| {
+        types.iter().any(|kind| unsafe {
+            kind.isEqualToString(NSPasteboardTypePNG) || kind.isEqualToString(NSPasteboardTypeTIFF)
+        })
+    });
+    Some((change_count, has_image))
 }
 
 // ── 响应解析 ─────────────────────────────────────────────
@@ -1542,6 +1579,7 @@ struct AppState {
     db: Option<Connection>,
     http_client: Arc<Client>,    // 复用的 HTTP 客户端
     watch_stop: Arc<AtomicBool>, // watch 线程优雅退出信号
+    watch_active_tasks: Arc<AtomicUsize>,
     tray_handles: Option<TrayMenuHandles>,
     shared_recent_urls: Arc<Mutex<Vec<String>>>,
 }
@@ -2645,19 +2683,48 @@ impl AppState {
         let tx = self.tx.clone();
         let shared = Arc::clone(&self.shared_config);
         let stop = Arc::clone(&self.watch_stop);
+        let active_tasks = Arc::clone(&self.watch_active_tasks);
         thread::spawn(move || {
+            #[cfg(target_os = "macos")]
+            let mut last_change_count: i64 = 0;
+            #[cfg(not(target_os = "macos"))]
             let mut last_fp: u64 = 0;
+            let mut last_clipboard_change_at = Instant::now();
             while !stop.load(Ordering::Relaxed) {
                 let cfg = shared.lock().unwrap().clone();
                 let auto_watch = cfg.auto_watch.unwrap_or(false);
-                thread::sleep(Duration::from_millis(if auto_watch { 500 } else { 2000 }));
+                let has_active_tasks = active_tasks.load(Ordering::Relaxed) > 0;
+                thread::sleep(watch_poll_interval(
+                    auto_watch,
+                    last_clipboard_change_at.elapsed(),
+                    has_active_tasks,
+                ));
                 if !auto_watch {
                     continue;
                 }
+                #[cfg(target_os = "macos")]
+                {
+                    // macOS 用 changeCount 轮询剪贴板变化，避免每 500ms 把整张图片读进进程。
+                    if let Some((change_count, has_image)) = macos_clipboard_change_info() {
+                        if change_count != last_change_count {
+                            last_change_count = change_count;
+                            last_clipboard_change_at = Instant::now();
+                            if has_image {
+                                if let Some(img) = read_clipboard_image() {
+                                    let _ = tx.send(AppEvent::WatchUpload(img));
+                                    ctx.request_repaint();
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                #[cfg(not(target_os = "macos"))]
                 // 轻量指纹检查：只读原始 RGBA bytes，不做 PNG 编码
                 if let Some(fp) = clipboard_raw_fingerprint() {
                     if fp != last_fp {
                         last_fp = fp;
+                        last_clipboard_change_at = Instant::now();
                         // 指纹变了，才做完整 PNG 编码
                         if let Some(img) = read_clipboard_image() {
                             let _ = tx.send(AppEvent::WatchUpload(img));
@@ -2801,7 +2868,14 @@ impl eframe::App for AppState {
             return;
         }
 
-        let has_uploading = self.tasks.iter().any(|t| task_is_active(&t.status));
+        let active_task_count = self
+            .tasks
+            .iter()
+            .filter(|t| task_is_active(&t.status))
+            .count();
+        self.watch_active_tasks
+            .store(active_task_count, Ordering::Relaxed);
+        let has_uploading = active_task_count > 0;
 
         // 智能降频：有任务时快速刷新，空闲时大幅降频（靠后台事件 ctx.request_repaint() 驱动）
         if has_uploading || self.status_clear_at.is_some() {
@@ -2810,11 +2884,7 @@ impl eframe::App for AppState {
             ctx.request_repaint_after(Duration::from_secs(2));
         }
 
-        let uploading_count = self
-            .tasks
-            .iter()
-            .filter(|t| task_is_active(&t.status))
-            .count();
+        let uploading_count = active_task_count;
         let failed_count = self
             .tasks
             .iter()
@@ -3376,6 +3446,7 @@ fn main() {
             .unwrap_or_else(|_| Client::new()),
     );
     let watch_stop = Arc::new(AtomicBool::new(false));
+    let watch_active_tasks = Arc::new(AtomicUsize::new(0));
 
     if let Err(e) = eframe::run_native(
         "剪贴板上传工具",
@@ -3413,6 +3484,7 @@ fn main() {
                 db,
                 http_client,
                 watch_stop,
+                watch_active_tasks,
                 tray_handles: tray_handles_opt,
                 shared_recent_urls,
             };

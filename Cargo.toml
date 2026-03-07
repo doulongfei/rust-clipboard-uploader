@@ -1,6 +1,6 @@
 [package]
 name = "rust-clipboard-uploader"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2021"
 description = "从剪贴板读取图片并上传到图床的 GUI 工具"
 license = "MIT"
@@ -23,4 +23,6 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.2.2", features = ["NSPasteboard"] }
+objc2-foundation = "0.2.2"
 winit = "0.30.12"
