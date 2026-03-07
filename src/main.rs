@@ -15,6 +15,7 @@ use reqwest::blocking::Client;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::ErrorKind;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
@@ -52,6 +53,7 @@ struct UploadTask {
     created_at: String,               // 格式 %H:%M:%S
     data_expires_at: Option<Instant>, // 失败任务图片数据过期时间（5分钟后自动释放）
     retry_count: u8,                  // 已执行的自动重试次数
+    retry_token: u64,                 // 递增 token，用于使旧的自动重试定时器失效
 }
 
 // ── 消息类型（后台线程 → 主线程）──────────────────────────
@@ -59,7 +61,7 @@ struct UploadTask {
 enum AppEvent {
     TaskProgress(usize, TaskStatus), // (task_id, new_status)
     WatchUpload(Vec<u8>),            // 监听线程捕获到新图片，主线程分配任务
-    RetryTask(usize),                // 自动重试定时器回到主线程
+    RetryTask(usize, u64),           // 自动重试定时器回到主线程（task_id, retry_token）
     TrayShowWindow,
     TrayUpload,
     TrayToggleWatch,
@@ -131,6 +133,11 @@ struct Config {
     theme_mode: Option<ThemeMode>,
     accent_color: Option<AccentColor>,
     hotkey: Option<String>,
+}
+
+struct LoadedConfig {
+    config: Config,
+    load_error: Option<String>,
 }
 
 impl Default for Config {
@@ -292,11 +299,54 @@ fn db_clear(conn: &Connection) {
     let _ = conn.execute("DELETE FROM history", []);
 }
 
-fn load_config() -> Config {
-    config_path()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|s| serde_yaml::from_str(&s).ok())
-        .unwrap_or_default()
+fn load_config() -> LoadedConfig {
+    let Some(path) = config_path() else {
+        return LoadedConfig {
+            config: Config::default(),
+            load_error: None,
+        };
+    };
+
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return LoadedConfig {
+                config: Config::default(),
+                load_error: None,
+            };
+        }
+        Err(err) => {
+            let load_error = format!(
+                "读取配置失败，已使用默认配置；原文件未覆盖（{}）: {}",
+                path.display(),
+                err
+            );
+            eprintln!("{}", load_error);
+            return LoadedConfig {
+                config: Config::default(),
+                load_error: Some(load_error),
+            };
+        }
+    };
+
+    match serde_yaml::from_str(&content) {
+        Ok(config) => LoadedConfig {
+            config,
+            load_error: None,
+        },
+        Err(err) => {
+            let load_error = format!(
+                "配置文件解析失败，已使用默认配置；请检查 {}，确认后手动保存覆盖原文件: {}",
+                path.display(),
+                err
+            );
+            eprintln!("{}", load_error);
+            LoadedConfig {
+                config: Config::default(),
+                load_error: Some(load_error),
+            }
+        }
+    }
 }
 
 fn save_config(cfg: &Config) -> Result<()> {
@@ -372,7 +422,7 @@ fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
     } else if resp == "json" {
         String::new()
     } else {
-        resp.replace('[', "").replace(']', "")
+        resp.replace(['[', ']'], "")
     };
 
     let mut cur = &j;
@@ -389,10 +439,8 @@ fn extract_url_from_response(cfg: &Config, text: &str) -> Option<String> {
             cur = cur.get(seg)?;
         }
     }
-    if path_str.is_empty() {
-        if cur.is_array() {
-            cur = cur.get(0)?;
-        }
+    if path_str.is_empty() && cur.is_array() {
+        cur = cur.get(0)?;
     }
     if cur.is_string() {
         cur.as_str().map(|s| s.to_string())
@@ -493,7 +541,7 @@ fn setup_fonts(ctx: &egui::Context) {
     // 内嵌 Noto Emoji 字体（编译时打包）
     fonts.font_data.insert(
         "noto_emoji".to_owned(),
-        egui::FontData::from_static(include_bytes!("../assets/NotoEmoji-Regular.ttf")).into(),
+        egui::FontData::from_static(include_bytes!("../assets/NotoEmoji-Regular.ttf")),
     );
 
     // CJK 字体候选（系统字体）
@@ -512,7 +560,7 @@ fn setup_fonts(ctx: &egui::Context) {
         if let Ok(data) = fs::read(path) {
             fonts
                 .font_data
-                .insert("cjk".to_owned(), egui::FontData::from_owned(data).into());
+                .insert("cjk".to_owned(), egui::FontData::from_owned(data));
             fonts
                 .families
                 .get_mut(&egui::FontFamily::Proportional)
@@ -1580,6 +1628,7 @@ struct AppState {
     http_client: Arc<Client>,    // 复用的 HTTP 客户端
     watch_stop: Arc<AtomicBool>, // watch 线程优雅退出信号
     watch_active_tasks: Arc<AtomicUsize>,
+    allow_exit_config_save: bool,
     tray_handles: Option<TrayMenuHandles>,
     shared_recent_urls: Arc<Mutex<Vec<String>>>,
 }
@@ -1609,6 +1658,7 @@ impl AppState {
             created_at,
             data_expires_at: Some(Instant::now() + Duration::from_secs(300)), // 5分钟后过期
             retry_count: 0,
+            retry_token: 0,
         });
         let cfg = self.config.clone();
         let tx = self.tx.clone();
@@ -1650,6 +1700,8 @@ impl AppState {
 
         let next_retry = task.retry_count + 1;
         let delay = auto_retry_delay_seconds(next_retry);
+        task.retry_token = task.retry_token.wrapping_add(1);
+        let retry_token = task.retry_token;
         task.status = TaskStatus::Retrying {
             message: message.to_string(),
             attempt: next_retry,
@@ -1661,7 +1713,7 @@ impl AppState {
         let tx = self.tx.clone();
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(delay));
-            let _ = tx.send(AppEvent::RetryTask(task_id));
+            let _ = tx.send(AppEvent::RetryTask(task_id, retry_token));
         });
         self.set_status_sticky(
             true,
@@ -1673,7 +1725,24 @@ impl AppState {
         true
     }
 
-    fn start_retry_task(&mut self, task_id: usize, manual: bool) {
+    fn start_retry_task(
+        &mut self,
+        task_id: usize,
+        manual: bool,
+        expected_retry_token: Option<u64>,
+    ) {
+        if !manual {
+            let Some(task) = self.tasks.iter().find(|t| t.id == task_id) else {
+                return;
+            };
+            if !matches!(task.status, TaskStatus::Retrying { .. }) {
+                return;
+            }
+            if expected_retry_token != Some(task.retry_token) {
+                return;
+            }
+        }
+
         // 若 image_data 已清空则重新读剪贴板
         let img = match self.tasks.iter().find(|t| t.id == task_id) {
             Some(t) if !t.image_data.is_empty() => t.image_data.clone(),
@@ -1694,6 +1763,7 @@ impl AppState {
             t.data_expires_at = Some(Instant::now() + Duration::from_secs(300));
             if manual {
                 t.retry_count = 0;
+                t.retry_token = t.retry_token.wrapping_add(1);
             } else {
                 t.retry_count = t.retry_count.saturating_add(1);
             }
@@ -1705,11 +1775,11 @@ impl AppState {
     }
 
     fn retry_task(&mut self, task_id: usize) {
-        self.start_retry_task(task_id, true);
+        self.start_retry_task(task_id, true, None);
     }
 
-    fn retry_task_auto(&mut self, task_id: usize) {
-        self.start_retry_task(task_id, false);
+    fn retry_task_auto(&mut self, task_id: usize, retry_token: u64) {
+        self.start_retry_task(task_id, false, Some(retry_token));
     }
 
     fn sync_tray_menu(&mut self) {
@@ -1728,23 +1798,19 @@ impl AppState {
         let has_uploading = self.tasks.iter().any(|t| task_is_active(&t.status));
         let status_text = if has_uploading {
             "状态: 上传中...".to_string()
-        } else if let Some((is_err, ref msg)) = self.status {
-            if is_err {
-                format!("状态: {}", msg)
-            } else {
-                format!("状态: {}", msg)
-            }
+        } else if let Some((_, ref msg)) = self.status {
+            format!("状态: {}", msg)
         } else {
             "状态: 空闲".to_string()
         };
-        let _ = handles.item_status.set_text(&status_text);
+        handles.item_status.set_text(&status_text);
 
         // 同步上传按钮
         handles.item_upload.set_enabled(!has_uploading);
         if has_uploading {
-            let _ = handles.item_upload.set_text("上传中...");
+            handles.item_upload.set_text("上传中...");
         } else {
-            let _ = handles.item_upload.set_text("从剪贴板上传");
+            handles.item_upload.set_text("从剪贴板上传");
         }
 
         // 同步最近上传子菜单
@@ -1978,6 +2044,7 @@ impl AppState {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_control_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -2010,6 +2077,7 @@ impl AppState {
                 match save_config(&self.config) {
                     Ok(_) => {
                         self.config_dirty = false;
+                        self.allow_exit_config_save = true;
                         self.set_status_auto_clear(false, "配置已保存".to_string());
                     }
                     Err(e) => self.set_status_sticky(true, format!("保存失败: {}", e)),
@@ -2686,13 +2754,30 @@ impl AppState {
         let active_tasks = Arc::clone(&self.watch_active_tasks);
         thread::spawn(move || {
             #[cfg(target_os = "macos")]
-            let mut last_change_count: i64 = 0;
+            let mut last_change_count: i64 = macos_clipboard_change_info()
+                .map(|(change_count, _)| change_count)
+                .unwrap_or(0);
             #[cfg(not(target_os = "macos"))]
-            let mut last_fp: u64 = 0;
+            let mut last_fp: u64 = clipboard_raw_fingerprint().unwrap_or(0);
             let mut last_clipboard_change_at = Instant::now();
+            let mut watch_was_enabled = false;
             while !stop.load(Ordering::Relaxed) {
                 let cfg = shared.lock().unwrap().clone();
                 let auto_watch = cfg.auto_watch.unwrap_or(false);
+                if auto_watch && !watch_was_enabled {
+                    #[cfg(target_os = "macos")]
+                    if let Some((change_count, _)) = macos_clipboard_change_info() {
+                        last_change_count = change_count;
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        last_fp = clipboard_raw_fingerprint().unwrap_or(0);
+                    }
+                    last_clipboard_change_at = Instant::now();
+                    watch_was_enabled = true;
+                } else if !auto_watch {
+                    watch_was_enabled = false;
+                }
                 let has_active_tasks = active_tasks.load(Ordering::Relaxed) > 0;
                 thread::sleep(watch_poll_interval(
                     auto_watch,
@@ -2821,8 +2906,8 @@ impl eframe::App for AppState {
                     self.bottom_tab = BottomTab::Tasks;
                     self.spawn_task(img);
                 }
-                AppEvent::RetryTask(task_id) => {
-                    self.retry_task_auto(task_id);
+                AppEvent::RetryTask(task_id, retry_token) => {
+                    self.retry_task_auto(task_id, retry_token);
                 }
                 AppEvent::TrayShowWindow => {
                     show_main_window(ctx);
@@ -3332,12 +3417,18 @@ impl eframe::App for AppState {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.watch_stop.store(true, Ordering::Relaxed);
-        let _ = save_config(&self.config);
+        if self.allow_exit_config_save {
+            let _ = save_config(&self.config);
+        } else {
+            eprintln!("本次未自动保存配置：启动时读取配置失败，请在确认设置后手动保存。");
+        }
     }
 }
 
 fn main() {
-    let cfg = load_config();
+    let loaded_config = load_config();
+    let cfg = loaded_config.config;
+    let config_load_error = loaded_config.load_error;
     let shared_config = Arc::new(Mutex::new(cfg.clone()));
     let (tx, rx) = mpsc::channel::<AppEvent>();
 
@@ -3464,11 +3555,12 @@ fn main() {
             } else {
                 vec![]
             };
+            let initial_status = config_load_error.as_ref().map(|msg| (true, msg.clone()));
             let app = AppState {
                 config: cfg,
                 shared_config: Arc::clone(&shared_for_app),
                 last_url: None,
-                status: None,
+                status: initial_status,
                 status_clear_at: None,
                 rx,
                 tx: tx_for_app.clone(),
@@ -3480,11 +3572,12 @@ fn main() {
                 active_tab: AppTab::Overview,
                 settings_tab: SettingsTab::Config,
                 bottom_tab: BottomTab::Tasks,
-                config_dirty: false,
+                config_dirty: config_load_error.is_some(),
                 db,
                 http_client,
                 watch_stop,
                 watch_active_tasks,
+                allow_exit_config_save: config_load_error.is_none(),
                 tray_handles: tray_handles_opt,
                 shared_recent_urls,
             };
