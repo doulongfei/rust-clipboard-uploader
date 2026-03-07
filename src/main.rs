@@ -21,6 +21,8 @@ use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu},
     Icon as TrayIconImg, TrayIcon, TrayIconBuilder,
 };
+#[cfg(target_os = "macos")]
+use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
 
 // ── 上传任务 ──────────────────────────────────────────────
 #[derive(Debug, Clone)]
@@ -168,6 +170,23 @@ fn task_is_active(status: &TaskStatus) -> bool {
         status,
         TaskStatus::Uploading | TaskStatus::Processing | TaskStatus::Retrying { .. }
     )
+}
+
+fn show_main_window(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+    if cfg!(target_os = "macos") {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+}
+
+fn hide_main_window_to_background(ctx: &egui::Context) {
+    if cfg!(target_os = "macos") {
+        // macOS 上直接设为不可见会让 Dock 菜单出现“无可用窗口”。
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    } else {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
 }
 
 // ── 配置文件路径 ──────────────────────────────────────────
@@ -1868,8 +1887,8 @@ impl AppState {
             let close_tray = self.config.close_to_tray.get_or_insert(true);
             render_setting_row(
                 ui,
-                "关闭窗口收起到托盘",
-                "关闭主窗口时保持后台运行。",
+                "关闭窗口保留后台运行",
+                "关闭主窗口时保持后台运行；macOS 会转为菜单栏后台应用，其他平台隐藏到托盘。",
                 palette,
                 |ui| {
                     if apple_toggle_switch(ui, close_tray).changed() {
@@ -2099,7 +2118,7 @@ impl AppState {
                 ui,
                 "关闭窗口",
                 if close_to_tray {
-                    "收起到托盘"
+                    "保持后台运行"
                 } else {
                     "直接退出"
                 },
@@ -2739,7 +2758,7 @@ impl eframe::App for AppState {
                     self.retry_task_auto(task_id);
                 }
                 AppEvent::TrayShowWindow => {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    show_main_window(ctx);
                 }
                 AppEvent::TrayUpload => {
                     self.trigger_upload();
@@ -2765,14 +2784,14 @@ impl eframe::App for AppState {
         // ── 同步托盘菜单状态 ──
         self.sync_tray_menu();
 
-        // ── 关闭按钮拦截：最小化到托盘而非退出 ──
+        // ── 关闭按钮拦截：保留后台运行而非退出 ──
         if ctx.input(|i| i.viewport().close_requested()) {
             if self.quit_requested {
                 // 来自托盘菜单"退出"，允许真正关闭
             } else if self.config.close_to_tray.unwrap_or(true) {
-                // 拦截关闭，隐藏窗口到托盘
+                // 拦截关闭，保留窗口以便后续从托盘或 Dock 恢复
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                hide_main_window_to_background(ctx);
                 return;
             }
         }
@@ -3330,13 +3349,19 @@ fn main() {
 
     // ── 启动 eframe ──────────────────────────────────────
     let watch_active = cfg.auto_watch.unwrap_or(false);
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 820.0])
             .with_min_inner_size([720.0, 620.0])
             .with_title("剪贴板上传工具"),
         ..Default::default()
     };
+    #[cfg(target_os = "macos")]
+    if has_tray {
+        options.event_loop_builder = Some(Box::new(|builder| {
+            builder.with_activation_policy(ActivationPolicy::Accessory);
+        }));
+    }
 
     let shared_for_app = Arc::clone(&shared_config);
     let tx_for_app = tx.clone();
