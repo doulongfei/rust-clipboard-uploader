@@ -26,9 +26,18 @@ use tray_icon::{
 #[derive(Debug, Clone)]
 enum TaskStatus {
     Uploading,
-    Processing,              // 已上传，服务端处理中（如大模型命名）
+    Processing, // 已上传，服务端处理中（如大模型命名）
+    Retrying {
+        message: String,
+        attempt: u8,
+        max_retries: u8,
+        wait_seconds: u64,
+    },
     Success(String, String), // (url, src)
-    Failed(String),          // error msg
+    Failed {
+        message: String,
+        retryable: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +47,7 @@ struct UploadTask {
     image_data: Vec<u8>,              // 用于失败重试；完成后清空
     created_at: String,               // 格式 %H:%M:%S
     data_expires_at: Option<Instant>, // 失败任务图片数据过期时间（5分钟后自动释放）
+    retry_count: u8,                  // 已执行的自动重试次数
 }
 
 // ── 消息类型（后台线程 → 主线程）──────────────────────────
@@ -45,6 +55,7 @@ struct UploadTask {
 enum AppEvent {
     TaskProgress(usize, TaskStatus), // (task_id, new_status)
     WatchUpload(Vec<u8>),            // 监听线程捕获到新图片，主线程分配任务
+    RetryTask(usize),                // 自动重试定时器回到主线程
     TrayShowWindow,
     TrayUpload,
     TrayToggleWatch,
@@ -110,6 +121,7 @@ struct Config {
     response: Option<String>,
     copy_to_clipboard: Option<bool>,
     auto_watch: Option<bool>,
+    auto_retry: Option<bool>,
     notify_on_success: Option<bool>,
     close_to_tray: Option<bool>,
     theme_mode: Option<ThemeMode>,
@@ -127,6 +139,7 @@ impl Default for Config {
             response: Some("text".to_string()),
             copy_to_clipboard: Some(false),
             auto_watch: Some(false),
+            auto_retry: Some(true),
             notify_on_success: Some(false),
             close_to_tray: Some(true),
             theme_mode: Some(ThemeMode::System),
@@ -134,6 +147,27 @@ impl Default for Config {
             hotkey: None,
         }
     }
+}
+
+const AUTO_RETRY_MAX_RETRIES: u8 = 2;
+
+fn auto_retry_enabled(config: &Config) -> bool {
+    config.auto_retry.unwrap_or(true)
+}
+
+fn auto_retry_delay_seconds(retry_attempt: u8) -> u64 {
+    match retry_attempt {
+        1 => 2,
+        2 => 5,
+        _ => 8,
+    }
+}
+
+fn task_is_active(status: &TaskStatus) -> bool {
+    matches!(
+        status,
+        TaskStatus::Uploading | TaskStatus::Processing | TaskStatus::Retrying { .. }
+    )
 }
 
 // ── 配置文件路径 ──────────────────────────────────────────
@@ -356,11 +390,17 @@ fn build_upload_request(
     Ok(req.multipart(form))
 }
 
+#[derive(Debug)]
+struct UploadFailure {
+    message: String,
+    retryable: bool,
+}
+
 // ── 上传：解析响应 ────────────────────────────────────
 fn parse_upload_response(
     cfg: &Config,
     resp: reqwest::blocking::Response,
-) -> Result<(String, String)> {
+) -> std::result::Result<(String, String), UploadFailure> {
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if status.is_success() {
@@ -368,7 +408,10 @@ fn parse_upload_response(
         let src = extract_src_from_response(&text);
         return Ok((url, src));
     }
-    Err(anyhow::anyhow!("请求失败: {} — {}", status, text.trim()))
+    Err(UploadFailure {
+        message: format!("请求失败: {} — {}", status, text.trim()),
+        retryable: status.as_u16() == 429 || status.is_server_error(),
+    })
 }
 
 // ── 剪贴板写入 ───────────────────────────────────────────
@@ -1245,7 +1288,10 @@ fn do_upload_task(
         Err(e) => {
             let _ = tx.send(AppEvent::TaskProgress(
                 task_id,
-                TaskStatus::Failed(format!("构建请求失败: {}", e)),
+                TaskStatus::Failed {
+                    message: format!("构建请求失败: {}", e),
+                    retryable: false,
+                },
             ));
             return;
         }
@@ -1255,7 +1301,10 @@ fn do_upload_task(
         Err(e) => {
             let _ = tx.send(AppEvent::TaskProgress(
                 task_id,
-                TaskStatus::Failed(format!("发送请求失败: {}", e)),
+                TaskStatus::Failed {
+                    message: format!("发送请求失败: {}", e),
+                    retryable: true,
+                },
             ));
             return;
         }
@@ -1273,9 +1322,14 @@ fn do_upload_task(
                 TaskStatus::Success(url, src),
             ));
         }
-        Err(e) => {
-            let msg = format!("上传失败: {}", e);
-            let _ = tx.send(AppEvent::TaskProgress(task_id, TaskStatus::Failed(msg)));
+        Err(err) => {
+            let _ = tx.send(AppEvent::TaskProgress(
+                task_id,
+                TaskStatus::Failed {
+                    message: format!("上传失败: {}", err.message),
+                    retryable: err.retryable,
+                },
+            ));
         }
     }
 }
@@ -1497,6 +1551,7 @@ impl AppState {
             image_data: img.clone(),
             created_at,
             data_expires_at: Some(Instant::now() + Duration::from_secs(300)), // 5分钟后过期
+            retry_count: 0,
         });
         let cfg = self.config.clone();
         let tx = self.tx.clone();
@@ -1506,10 +1561,7 @@ impl AppState {
     }
 
     fn trigger_upload(&mut self) {
-        let has_uploading = self
-            .tasks
-            .iter()
-            .any(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
+        let has_uploading = self.tasks.iter().any(|t| task_is_active(&t.status));
         if has_uploading {
             return;
         }
@@ -1528,7 +1580,43 @@ impl AppState {
         self.spawn_task(img);
     }
 
-    fn retry_task(&mut self, task_id: usize) {
+    fn schedule_auto_retry(&mut self, task_id: usize, message: &str) -> bool {
+        if !auto_retry_enabled(&self.config) {
+            return false;
+        }
+        let Some(task) = self.tasks.iter_mut().find(|t| t.id == task_id) else {
+            return false;
+        };
+        if task.retry_count >= AUTO_RETRY_MAX_RETRIES {
+            return false;
+        }
+
+        let next_retry = task.retry_count + 1;
+        let delay = auto_retry_delay_seconds(next_retry);
+        task.status = TaskStatus::Retrying {
+            message: message.to_string(),
+            attempt: next_retry,
+            max_retries: AUTO_RETRY_MAX_RETRIES,
+            wait_seconds: delay,
+        };
+        task.data_expires_at = Some(Instant::now() + Duration::from_secs(300));
+
+        let tx = self.tx.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(delay));
+            let _ = tx.send(AppEvent::RetryTask(task_id));
+        });
+        self.set_status_sticky(
+            true,
+            format!(
+                "上传失败，{} 秒后自动重试（{}/{}）",
+                delay, next_retry, AUTO_RETRY_MAX_RETRIES
+            ),
+        );
+        true
+    }
+
+    fn start_retry_task(&mut self, task_id: usize, manual: bool) {
         // 若 image_data 已清空则重新读剪贴板
         let img = match self.tasks.iter().find(|t| t.id == task_id) {
             Some(t) if !t.image_data.is_empty() => t.image_data.clone(),
@@ -1541,15 +1629,30 @@ impl AppState {
             },
             None => return,
         };
+        self.status = None;
+        self.status_clear_at = None;
         if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             t.status = TaskStatus::Uploading;
             t.image_data = img.clone();
             t.data_expires_at = Some(Instant::now() + Duration::from_secs(300));
+            if manual {
+                t.retry_count = 0;
+            } else {
+                t.retry_count = t.retry_count.saturating_add(1);
+            }
         }
         let cfg = self.config.clone();
         let tx = self.tx.clone();
         let client = Arc::clone(&self.http_client);
         thread::spawn(move || do_upload_task(&client, &cfg, &tx, task_id, img));
+    }
+
+    fn retry_task(&mut self, task_id: usize) {
+        self.start_retry_task(task_id, true);
+    }
+
+    fn retry_task_auto(&mut self, task_id: usize) {
+        self.start_retry_task(task_id, false);
     }
 
     fn sync_tray_menu(&mut self) {
@@ -1565,10 +1668,7 @@ impl AppState {
         }
 
         // 同步状态文字
-        let has_uploading = self
-            .tasks
-            .iter()
-            .any(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
+        let has_uploading = self.tasks.iter().any(|t| task_is_active(&t.status));
         let status_text = if has_uploading {
             "状态: 上传中...".to_string()
         } else if let Some((is_err, ref msg)) = self.status {
@@ -1734,6 +1834,19 @@ impl AppState {
                 palette,
                 |ui| {
                     if apple_toggle_switch(ui, copy).changed() {
+                        self.config_dirty = true;
+                    }
+                },
+            );
+
+            let auto_retry = self.config.auto_retry.get_or_insert(true);
+            render_setting_row(
+                ui,
+                "失败自动重试",
+                "仅对网络错误、429 和 5xx 响应生效，最多自动重试 2 次。",
+                palette,
+                |ui| {
+                    if apple_toggle_switch(ui, auto_retry).changed() {
                         self.config_dirty = true;
                     }
                 },
@@ -2132,12 +2245,7 @@ impl AppState {
                             if !self.tasks.is_empty()
                                 && ui.add(secondary_button("清空已完成", palette)).clicked()
                             {
-                                self.tasks.retain(|t| {
-                                    matches!(
-                                        t.status,
-                                        TaskStatus::Uploading | TaskStatus::Processing
-                                    )
-                                });
+                                self.tasks.retain(|t| task_is_active(&t.status));
                             }
                         }
                         BottomTab::History => {
@@ -2249,7 +2357,22 @@ impl AppState {
                                             apple_green().gamma_multiply(0.30),
                                         )
                                     }
-                                    TaskStatus::Failed(_) => (
+                                    TaskStatus::Retrying { .. } => (
+                                        "自动重试",
+                                        apple_orange().gamma_multiply(if ui.visuals().dark_mode {
+                                            0.25
+                                        } else {
+                                            0.12
+                                        }),
+                                        apple_orange(),
+                                        if ui.visuals().dark_mode {
+                                            egui::Color32::from_rgb(53, 39, 25)
+                                        } else {
+                                            egui::Color32::from_rgb(255, 250, 242)
+                                        },
+                                        apple_orange().gamma_multiply(0.30),
+                                    ),
+                                    TaskStatus::Failed { .. } => (
                                         "失败",
                                         apple_red().gamma_multiply(if ui.visuals().dark_mode {
                                             0.25
@@ -2291,7 +2414,12 @@ impl AppState {
                                                     }
                                                     ui.hyperlink_to("打开", url);
                                                 }
-                                                TaskStatus::Failed(_) => {
+                                                TaskStatus::Retrying { .. } => {
+                                                    if ui.small_button("移除").clicked() {
+                                                        remove_id = Some(task.id);
+                                                    }
+                                                }
+                                                TaskStatus::Failed { .. } => {
                                                     if ui.small_button("移除").clicked() {
                                                         remove_id = Some(task.id);
                                                     }
@@ -2327,6 +2455,29 @@ impl AppState {
                                                 );
                                             });
                                         }
+                                        TaskStatus::Retrying {
+                                            message,
+                                            attempt,
+                                            max_retries,
+                                            wait_seconds,
+                                        } => {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "最近一次失败: {}",
+                                                    message
+                                                ))
+                                                .size(13.0)
+                                                .color(apple_orange()),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "将在 {} 秒后自动重试（第 {}/{} 次）。",
+                                                    wait_seconds, attempt, max_retries
+                                                ))
+                                                .size(12.5)
+                                                .color(palette.muted),
+                                            );
+                                        }
                                         TaskStatus::Success(url, src) => {
                                             ui.label(
                                                 egui::RichText::new(url)
@@ -2341,12 +2492,21 @@ impl AppState {
                                                 );
                                             }
                                         }
-                                        TaskStatus::Failed(err) => {
+                                        TaskStatus::Failed { message, retryable } => {
                                             ui.label(
-                                                egui::RichText::new(err)
+                                                egui::RichText::new(message)
                                                     .size(13.0)
                                                     .color(apple_red()),
                                             );
+                                            if !retryable {
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        "这类错误不会自动重试，请检查上传地址、请求头或响应解析配置。",
+                                                    )
+                                                    .size(12.0)
+                                                    .color(palette.muted),
+                                                );
+                                            }
                                             if task.image_data.is_empty() {
                                                 ui.label(
                                                     egui::RichText::new(
@@ -2522,6 +2682,7 @@ impl eframe::App for AppState {
                             if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
                                 t.status = TaskStatus::Success(url.clone(), src.clone());
                                 t.image_data = Vec::new(); // 释放内存
+                                t.retry_count = 0;
                             }
                             self.last_url = Some(url.clone());
                             let auto_copy = self.config.copy_to_clipboard.unwrap_or(false);
@@ -2541,13 +2702,19 @@ impl eframe::App for AppState {
                                 self.history = db_load(conn, 50);
                             }
                         }
-                        TaskStatus::Failed(msg) => {
-                            let msg = msg.clone();
-                            if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
-                                t.status = TaskStatus::Failed(msg.clone());
-                                // 保留 image_data 供重试
+                        TaskStatus::Failed { message, retryable } => {
+                            let message = message.clone();
+                            let retryable = *retryable;
+                            if !retryable || !self.schedule_auto_retry(task_id, &message) {
+                                if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
+                                    t.status = TaskStatus::Failed {
+                                        message: message.clone(),
+                                        retryable,
+                                    };
+                                    // 保留 image_data 供重试
+                                }
+                                self.set_status_sticky(true, message);
                             }
-                            self.set_status_sticky(true, msg);
                         }
                         TaskStatus::Uploading => {
                             if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
@@ -2560,12 +2727,16 @@ impl eframe::App for AppState {
                                 t.image_data = Vec::new(); // 文件已传完，释放内存
                             }
                         }
+                        TaskStatus::Retrying { .. } => {}
                     }
                 }
                 AppEvent::WatchUpload(img) => {
                     self.active_tab = AppTab::Activity;
                     self.bottom_tab = BottomTab::Tasks;
                     self.spawn_task(img);
+                }
+                AppEvent::RetryTask(task_id) => {
+                    self.retry_task_auto(task_id);
                 }
                 AppEvent::TrayShowWindow => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -2611,10 +2782,7 @@ impl eframe::App for AppState {
             return;
         }
 
-        let has_uploading = self
-            .tasks
-            .iter()
-            .any(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing));
+        let has_uploading = self.tasks.iter().any(|t| task_is_active(&t.status));
 
         // 智能降频：有任务时快速刷新，空闲时大幅降频（靠后台事件 ctx.request_repaint() 驱动）
         if has_uploading || self.status_clear_at.is_some() {
@@ -2626,12 +2794,12 @@ impl eframe::App for AppState {
         let uploading_count = self
             .tasks
             .iter()
-            .filter(|t| matches!(t.status, TaskStatus::Uploading | TaskStatus::Processing))
+            .filter(|t| task_is_active(&t.status))
             .count();
         let failed_count = self
             .tasks
             .iter()
-            .filter(|t| matches!(t.status, TaskStatus::Failed(_)))
+            .filter(|t| matches!(t.status, TaskStatus::Failed { .. }))
             .count();
         let success_count = self
             .tasks
