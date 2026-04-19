@@ -357,7 +357,7 @@ fn save_config(cfg: &Config) -> Result<()> {
 }
 
 // ── 剪贴板图片读取 ────────────────────────────────────────
-fn read_clipboard_image_via_arboard() -> Option<Vec<u8>> {
+fn read_clipboard_image_fallback() -> Option<Vec<u8>> {
     let mut clipboard = Clipboard::new().ok()?;
     let image = clipboard.get_image().ok()?;
     let mut out = Vec::new();
@@ -379,12 +379,12 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
     if let Some(image_data) = unsafe { pasteboard.dataForType(NSPasteboardTypePNG) } {
         return Some(unsafe { image_data.as_bytes_unchecked() }.to_vec());
     }
-    read_clipboard_image_via_arboard()
+    read_clipboard_image_fallback()
 }
 
 #[cfg(not(target_os = "macos"))]
 fn read_clipboard_image() -> Option<Vec<u8>> {
-    read_clipboard_image_via_arboard()
+    read_clipboard_image_fallback()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1665,6 +1665,15 @@ impl AppState {
         self.status_clear_at = None;
     }
 
+    fn set_missing_clipboard_image_status(&mut self, retry: bool) {
+        let message = if retry {
+            "剪贴板中未检测到图片，无法重试"
+        } else {
+            "剪贴板中未检测到图片"
+        };
+        self.set_status_sticky(true, message.to_string());
+    }
+
     fn push_task(&mut self, image_data: Vec<u8>) -> usize {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
@@ -1721,14 +1730,14 @@ impl AppState {
         }
         #[cfg(target_os = "macos")]
         if !macos_clipboard_has_image() {
-            self.set_status_sticky(true, "剪贴板中未检测到图片".to_string());
+            self.set_missing_clipboard_image_status(false);
             return;
         }
         #[cfg(not(target_os = "macos"))]
         let img = match read_clipboard_image() {
             Some(d) => d,
             None => {
-                self.set_status_sticky(true, "剪贴板中未检测到图片".to_string());
+                self.set_missing_clipboard_image_status(false);
                 return;
             }
         };
@@ -1810,7 +1819,7 @@ impl AppState {
             #[cfg(target_os = "macos")]
             Some(_) => {
                 if !macos_clipboard_has_image() {
-                    self.set_status_sticky(true, "剪贴板中未检测到图片，无法重试".to_string());
+                    self.set_missing_clipboard_image_status(true);
                     return;
                 }
                 upload_from_clipboard = true;
@@ -1820,7 +1829,7 @@ impl AppState {
             Some(_) => match read_clipboard_image() {
                 Some(d) => Some(d),
                 None => {
-                    self.set_status_sticky(true, "剪贴板中未检测到图片，无法重试".to_string());
+                    self.set_missing_clipboard_image_status(true);
                     return;
                 }
             },
@@ -3040,8 +3049,11 @@ impl eframe::App for AppState {
         // 智能降频：有任务时快速刷新，其余状态改为按需刷新。
         if has_uploading {
             ctx.request_repaint_after(Duration::from_millis(200));
-        } else if let Some(clear_at) = self.status_clear_at {
-            ctx.request_repaint_after(clear_at.saturating_duration_since(Instant::now()));
+        } else if let Some(delay) = self
+            .status_clear_at
+            .and_then(|clear_at| clear_at.checked_duration_since(Instant::now()))
+        {
+            ctx.request_repaint_after(delay);
         }
 
         let uploading_count = active_task_count;
