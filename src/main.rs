@@ -377,7 +377,7 @@ fn read_clipboard_image_fallback() -> Option<Vec<u8>> {
 fn read_clipboard_image() -> Option<Vec<u8>> {
     let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
     if let Some(image_data) = unsafe { pasteboard.dataForType(NSPasteboardTypePNG) } {
-        return Some(unsafe { image_data.as_bytes_unchecked() }.to_vec());
+        return Some(unsafe { image_data.bytes() }.to_vec());
     }
     read_clipboard_image_fallback()
 }
