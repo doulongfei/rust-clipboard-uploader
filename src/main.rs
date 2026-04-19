@@ -357,7 +357,7 @@ fn save_config(cfg: &Config) -> Result<()> {
 }
 
 // ── 剪贴板图片读取 ────────────────────────────────────────
-fn read_clipboard_image() -> Option<Vec<u8>> {
+fn read_clipboard_image_fallback() -> Option<Vec<u8>> {
     let mut clipboard = Clipboard::new().ok()?;
     let image = clipboard.get_image().ok()?;
     let mut out = Vec::new();
@@ -371,6 +371,20 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
         )
         .ok()?;
     Some(out)
+}
+
+#[cfg(target_os = "macos")]
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
+    if let Some(image_data) = unsafe { pasteboard.dataForType(NSPasteboardTypePNG) } {
+        return Some(unsafe { image_data.as_bytes_unchecked() }.to_vec());
+    }
+    read_clipboard_image_fallback()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    read_clipboard_image_fallback()
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -403,6 +417,11 @@ fn macos_clipboard_change_info() -> Option<(i64, bool)> {
         })
     });
     Some((change_count, has_image))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_clipboard_has_image() -> bool {
+    macos_clipboard_change_info().is_some_and(|(_, has_image)| has_image)
 }
 
 // ── 响应解析 ─────────────────────────────────────────────
@@ -1646,24 +1665,61 @@ impl AppState {
         self.status_clear_at = None;
     }
 
-    /// 分配任务ID，推入队列，启动上传线程
-    fn spawn_task(&mut self, img: Vec<u8>) -> usize {
+    fn set_missing_clipboard_image_status(&mut self, retry: bool) {
+        let message = if retry {
+            "剪贴板中未检测到图片，无法重试"
+        } else {
+            "剪贴板中未检测到图片"
+        };
+        self.set_status_sticky(true, message.to_string());
+    }
+
+    fn push_task(&mut self, image_data: Vec<u8>) -> usize {
         let task_id = self.next_task_id;
         self.next_task_id += 1;
         let created_at = Local::now().format("%H:%M:%S").to_string();
         self.tasks.push(UploadTask {
             id: task_id,
             status: TaskStatus::Uploading,
-            image_data: img.clone(),
+            image_data,
             created_at,
             data_expires_at: Some(Instant::now() + Duration::from_secs(300)), // 5分钟后过期
             retry_count: 0,
             retry_token: 0,
         });
+        task_id
+    }
+
+    fn start_upload_thread(&self, task_id: usize, img: Vec<u8>) {
         let cfg = self.config.clone();
         let tx = self.tx.clone();
         let client = Arc::clone(&self.http_client);
         thread::spawn(move || do_upload_task(&client, &cfg, &tx, task_id, img));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn start_clipboard_upload_thread(&self, task_id: usize) {
+        let cfg = self.config.clone();
+        let tx = self.tx.clone();
+        let client = Arc::clone(&self.http_client);
+        thread::spawn(move || match read_clipboard_image() {
+            Some(img) => do_upload_task(&client, &cfg, &tx, task_id, img),
+            None => {
+                let _ = tx.send(AppEvent::TaskProgress(
+                    task_id,
+                    TaskStatus::Failed {
+                        message: "剪贴板中未检测到图片".to_string(),
+                        retryable: false,
+                    },
+                ));
+            }
+        });
+    }
+
+    /// 分配任务ID，推入队列，启动上传线程
+    fn spawn_task(&mut self, img: Vec<u8>) -> usize {
+        let task_id = self.push_task(img.clone());
+        self.start_upload_thread(task_id, img);
         task_id
     }
 
@@ -1672,10 +1728,16 @@ impl AppState {
         if has_uploading {
             return;
         }
+        #[cfg(target_os = "macos")]
+        if !macos_clipboard_has_image() {
+            self.set_missing_clipboard_image_status(false);
+            return;
+        }
+        #[cfg(not(target_os = "macos"))]
         let img = match read_clipboard_image() {
             Some(d) => d,
             None => {
-                self.set_status_sticky(true, "剪贴板中未检测到图片".to_string());
+                self.set_missing_clipboard_image_status(false);
                 return;
             }
         };
@@ -1684,6 +1746,12 @@ impl AppState {
         self.last_url = None;
         self.active_tab = AppTab::Activity;
         self.bottom_tab = BottomTab::Tasks;
+        #[cfg(target_os = "macos")]
+        {
+            let task_id = self.push_task(Vec::new());
+            self.start_clipboard_upload_thread(task_id);
+        }
+        #[cfg(not(target_os = "macos"))]
         self.spawn_task(img);
     }
 
@@ -1744,12 +1812,24 @@ impl AppState {
         }
 
         // 若 image_data 已清空则重新读剪贴板
+        #[cfg(target_os = "macos")]
+        let mut upload_from_clipboard = false;
         let img = match self.tasks.iter().find(|t| t.id == task_id) {
-            Some(t) if !t.image_data.is_empty() => t.image_data.clone(),
+            Some(t) if !t.image_data.is_empty() => Some(t.image_data.clone()),
+            #[cfg(target_os = "macos")]
+            Some(_) => {
+                if !macos_clipboard_has_image() {
+                    self.set_missing_clipboard_image_status(true);
+                    return;
+                }
+                upload_from_clipboard = true;
+                None
+            }
+            #[cfg(not(target_os = "macos"))]
             Some(_) => match read_clipboard_image() {
-                Some(d) => d,
+                Some(d) => Some(d),
                 None => {
-                    self.set_status_sticky(true, "剪贴板中未检测到图片，无法重试".to_string());
+                    self.set_missing_clipboard_image_status(true);
                     return;
                 }
             },
@@ -1759,7 +1839,7 @@ impl AppState {
         self.status_clear_at = None;
         if let Some(t) = self.tasks.iter_mut().find(|t| t.id == task_id) {
             t.status = TaskStatus::Uploading;
-            t.image_data = img.clone();
+            t.image_data = img.clone().unwrap_or_default();
             t.data_expires_at = Some(Instant::now() + Duration::from_secs(300));
             if manual {
                 t.retry_count = 0;
@@ -1768,10 +1848,14 @@ impl AppState {
                 t.retry_count = t.retry_count.saturating_add(1);
             }
         }
-        let cfg = self.config.clone();
-        let tx = self.tx.clone();
-        let client = Arc::clone(&self.http_client);
-        thread::spawn(move || do_upload_task(&client, &cfg, &tx, task_id, img));
+        #[cfg(target_os = "macos")]
+        if upload_from_clipboard {
+            self.start_clipboard_upload_thread(task_id);
+            return;
+        }
+        if let Some(img) = img {
+            self.start_upload_thread(task_id, img);
+        }
     }
 
     fn retry_task(&mut self, task_id: usize) {
@@ -2962,11 +3046,14 @@ impl eframe::App for AppState {
             .store(active_task_count, Ordering::Relaxed);
         let has_uploading = active_task_count > 0;
 
-        // 智能降频：有任务时快速刷新，空闲时大幅降频（靠后台事件 ctx.request_repaint() 驱动）
-        if has_uploading || self.status_clear_at.is_some() {
+        // 智能降频：有任务时快速刷新，其余状态改为按需刷新。
+        if has_uploading {
             ctx.request_repaint_after(Duration::from_millis(200));
-        } else {
-            ctx.request_repaint_after(Duration::from_secs(2));
+        } else if let Some(delay) = self
+            .status_clear_at
+            .and_then(|clear_at| clear_at.checked_duration_since(Instant::now()))
+        {
+            ctx.request_repaint_after(delay);
         }
 
         let uploading_count = active_task_count;
@@ -3510,7 +3597,16 @@ fn main() {
 
     // ── 启动 eframe ──────────────────────────────────────
     let watch_active = cfg.auto_watch.unwrap_or(false);
+    #[cfg(target_os = "macos")]
     let mut options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([900.0, 820.0])
+            .with_min_inner_size([720.0, 620.0])
+            .with_title("剪贴板上传工具"),
+        ..Default::default()
+    };
+    #[cfg(not(target_os = "macos"))]
+    let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([900.0, 820.0])
             .with_min_inner_size([720.0, 620.0])
