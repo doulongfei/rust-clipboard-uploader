@@ -377,7 +377,7 @@ fn read_clipboard_image_fallback() -> Option<Vec<u8>> {
 fn read_clipboard_image() -> Option<Vec<u8>> {
     let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
     if let Some(image_data) = unsafe { pasteboard.dataForType(NSPasteboardTypePNG) } {
-        return Some(unsafe { image_data.bytes() }.to_vec());
+        return Some(image_data.bytes().to_vec());
     }
     read_clipboard_image_fallback()
 }
@@ -668,29 +668,29 @@ fn theme_palette(theme: egui::Theme, accent: AccentColor) -> ThemePalette {
     match theme {
         egui::Theme::Light => ThemePalette {
             accent,
-            bg: egui::Color32::from_rgb(242, 244, 248),
-            card: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 244),
-            soft: egui::Color32::from_rgb(247, 249, 252),
-            row: egui::Color32::from_rgb(251, 252, 255),
-            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 22),
-            text: egui::Color32::from_rgb(29, 31, 36),
-            muted: egui::Color32::from_rgb(111, 118, 132),
-            shadow: egui::Color32::from_black_alpha(14),
-            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 22),
-            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 160),
+            bg: egui::Color32::from_rgb(236, 239, 244),
+            card: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 248),
+            soft: egui::Color32::from_rgb(248, 249, 251),
+            row: egui::Color32::from_rgb(243, 245, 249),
+            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 28),
+            text: egui::Color32::from_rgb(24, 29, 39),
+            muted: egui::Color32::from_rgb(93, 102, 118),
+            shadow: egui::Color32::from_black_alpha(12),
+            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 12),
+            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180),
         },
         egui::Theme::Dark => ThemePalette {
             accent,
-            bg: egui::Color32::from_rgb(17, 19, 24),
-            card: egui::Color32::from_rgba_unmultiplied(28, 31, 38, 242),
-            soft: egui::Color32::from_rgb(33, 37, 46),
-            row: egui::Color32::from_rgb(37, 42, 52),
-            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22),
-            text: egui::Color32::from_rgb(240, 243, 248),
-            muted: egui::Color32::from_rgb(154, 160, 173),
-            shadow: egui::Color32::from_black_alpha(46),
-            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 34),
-            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18),
+            bg: egui::Color32::from_rgb(14, 16, 20),
+            card: egui::Color32::from_rgba_unmultiplied(24, 27, 33, 246),
+            soft: egui::Color32::from_rgb(31, 35, 43),
+            row: egui::Color32::from_rgb(36, 41, 50),
+            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
+            text: egui::Color32::from_rgb(241, 244, 248),
+            muted: egui::Color32::from_rgb(156, 165, 180),
+            shadow: egui::Color32::from_black_alpha(42),
+            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 18),
+            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 10),
         },
     }
 }
@@ -699,21 +699,21 @@ fn panel_card_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.card)
         .stroke(egui::Stroke::new(1.0, palette.border))
-        .rounding(egui::Rounding::same(24.0))
+        .rounding(egui::Rounding::same(8.0))
         .shadow(egui::Shadow {
-            offset: egui::vec2(0.0, 10.0),
-            blur: 26.0,
+            offset: egui::vec2(0.0, 8.0),
+            blur: 20.0,
             spread: 0.0,
             color: palette.shadow,
         })
-        .inner_margin(egui::Margin::same(20.0))
+        .inner_margin(egui::Margin::same(18.0))
 }
 
 fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
-        .rounding(egui::Rounding::same(18.0))
+        .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::same(14.0))
 }
 
@@ -721,7 +721,7 @@ fn setting_row_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.row)
         .stroke(egui::Stroke::new(1.0, palette.border))
-        .rounding(egui::Rounding::same(16.0))
+        .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
 }
 
@@ -796,13 +796,25 @@ fn render_summary_row(
 }
 
 fn render_window_controls(ui: &mut egui::Ui) {
-    let colors = [apple_red(), apple_orange(), apple_green()];
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        for color in colors {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-            ui.painter().circle_filled(rect.center(), 5.0, color);
-        }
+        ui.spacing_mut().item_spacing.x = 10.0;
+        egui::Frame::none()
+            .fill(ui.visuals().selection.bg_fill)
+            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::symmetric(8.0, 7.0))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("RCU")
+                        .size(12.0)
+                        .color(egui::Color32::WHITE)
+                        .strong(),
+                );
+            });
+        ui.label(
+            egui::RichText::new("Rust Clipboard Uploader")
+                .size(12.5)
+                .color(ui.visuals().weak_text_color()),
+        );
     });
 }
 
@@ -818,6 +830,86 @@ fn render_panel_header(ui: &mut egui::Ui, title: &str, subtitle: &str, palette: 
             .size(13.0)
             .color(palette.muted),
     );
+}
+
+#[derive(Clone, Copy)]
+enum EmptyStateIcon {
+    Upload,
+    History,
+}
+
+fn render_empty_state(
+    ui: &mut egui::Ui,
+    icon: EmptyStateIcon,
+    title: &str,
+    detail: &str,
+    palette: ThemePalette,
+) {
+    ui.vertical_centered(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), egui::Sense::hover());
+        let icon_rect = rect.shrink(8.0);
+        let painter = ui.painter();
+        painter.rect(
+            icon_rect,
+            egui::Rounding::same(8.0),
+            palette.row,
+            egui::Stroke::new(1.0, palette.border),
+        );
+
+        let center = icon_rect.center();
+        match icon {
+            EmptyStateIcon::Upload => {
+                painter.line_segment(
+                    [
+                        egui::pos2(center.x, center.y + 12.0),
+                        egui::pos2(center.x, center.y - 11.0),
+                    ],
+                    egui::Stroke::new(2.0, palette.accent),
+                );
+                painter.line_segment(
+                    [
+                        egui::pos2(center.x - 8.0, center.y - 3.0),
+                        egui::pos2(center.x, center.y - 11.0),
+                    ],
+                    egui::Stroke::new(2.0, palette.accent),
+                );
+                painter.line_segment(
+                    [
+                        egui::pos2(center.x + 8.0, center.y - 3.0),
+                        egui::pos2(center.x, center.y - 11.0),
+                    ],
+                    egui::Stroke::new(2.0, palette.accent),
+                );
+                painter.line_segment(
+                    [
+                        egui::pos2(center.x - 14.0, center.y + 13.0),
+                        egui::pos2(center.x + 14.0, center.y + 13.0),
+                    ],
+                    egui::Stroke::new(2.0, palette.muted),
+                );
+            }
+            EmptyStateIcon::History => {
+                painter.circle_stroke(center, 14.0, egui::Stroke::new(2.0, palette.accent));
+                painter.line_segment(
+                    [center, egui::pos2(center.x, center.y - 8.0)],
+                    egui::Stroke::new(2.0, palette.accent),
+                );
+                painter.line_segment(
+                    [center, egui::pos2(center.x + 7.0, center.y + 4.0)],
+                    egui::Stroke::new(2.0, palette.accent),
+                );
+            }
+        }
+
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(title)
+                .size(18.0)
+                .color(palette.text)
+                .strong(),
+        );
+        ui.label(egui::RichText::new(detail).size(13.0).color(palette.muted));
+    });
 }
 
 fn render_setting_row(
@@ -928,7 +1020,7 @@ fn secondary_button(text: impl Into<String>, palette: ThemePalette) -> egui::But
     )
     .fill(palette.row)
     .stroke(egui::Stroke::new(1.0, palette.border))
-    .rounding(egui::Rounding::same(14.0))
+    .rounding(egui::Rounding::same(8.0))
 }
 
 fn primary_button(text: impl Into<String>, palette: ThemePalette) -> egui::Button<'static> {
@@ -939,7 +1031,7 @@ fn primary_button(text: impl Into<String>, palette: ThemePalette) -> egui::Butto
     )
     .fill(palette.accent)
     .stroke(egui::Stroke::new(1.0, palette.accent))
-    .rounding(egui::Rounding::same(14.0))
+    .rounding(egui::Rounding::same(8.0))
 }
 
 fn render_singleline_input(
@@ -977,7 +1069,7 @@ fn render_singleline_input(
         widgets.inactive.bg_fill = input_fill;
         widgets.inactive.weak_bg_fill = input_fill;
         widgets.inactive.bg_stroke = egui::Stroke::new(1.0, idle_stroke);
-        widgets.inactive.rounding = egui::Rounding::same(16.0);
+        widgets.inactive.rounding = egui::Rounding::same(8.0);
 
         widgets.hovered = widgets.inactive;
         widgets.hovered.bg_fill = hover_fill;
@@ -1012,7 +1104,7 @@ fn render_segmented_choice(
     egui::Frame::none()
         .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
-        .rounding(egui::Rounding::same(14.0))
+        .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::same(4.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1040,7 +1132,7 @@ fn render_segmented_choice(
                             egui::Color32::TRANSPARENT
                         },
                     ))
-                    .rounding(egui::Rounding::same(11.0))
+                    .rounding(egui::Rounding::same(6.0))
                     .min_size(egui::vec2(72.0, 34.0));
                     if ui.add(button).clicked() && !is_selected {
                         *selected = (*option).to_string();
@@ -1060,70 +1152,75 @@ fn render_segmented_tab_bar(
     palette: ThemePalette,
 ) -> bool {
     let mut changed = false;
-    soft_card_frame(palette).show(ui, |ui| {
-        let tab_width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(120.0);
-        ui.horizontal(|ui| {
-            let task_selected = *selected == BottomTab::Tasks;
-            let task_button = egui::Button::new(
-                egui::RichText::new(task_label)
-                    .color(if task_selected {
-                        egui::Color32::WHITE
-                    } else {
-                        palette.text
-                    })
-                    .strong(),
-            )
-            .fill(if task_selected {
-                palette.accent
-            } else {
-                palette.row
-            })
-            .stroke(egui::Stroke::new(
-                1.0,
-                if task_selected {
+    egui::Frame::none()
+        .fill(palette.card)
+        .stroke(egui::Stroke::new(1.0, palette.border))
+        .rounding(egui::Rounding::same(8.0))
+        .inner_margin(egui::Margin::same(4.0))
+        .show(ui, |ui| {
+            let tab_width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(120.0);
+            ui.horizontal(|ui| {
+                let task_selected = *selected == BottomTab::Tasks;
+                let task_button = egui::Button::new(
+                    egui::RichText::new(task_label)
+                        .color(if task_selected {
+                            egui::Color32::WHITE
+                        } else {
+                            palette.text
+                        })
+                        .strong(),
+                )
+                .fill(if task_selected {
                     palette.accent
                 } else {
-                    palette.border
-                },
-            ))
-            .rounding(egui::Rounding::same(14.0))
-            .min_size(egui::vec2(tab_width, 40.0));
-            if ui.add(task_button).clicked() && !task_selected {
-                *selected = BottomTab::Tasks;
-                changed = true;
-            }
+                    palette.row
+                })
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    if task_selected {
+                        palette.accent
+                    } else {
+                        palette.border
+                    },
+                ))
+                .rounding(egui::Rounding::same(6.0))
+                .min_size(egui::vec2(tab_width, 40.0));
+                if ui.add(task_button).clicked() && !task_selected {
+                    *selected = BottomTab::Tasks;
+                    changed = true;
+                }
 
-            let history_selected = *selected == BottomTab::History;
-            let history_button = egui::Button::new(
-                egui::RichText::new(history_label)
-                    .color(if history_selected {
-                        egui::Color32::WHITE
-                    } else {
-                        palette.text
-                    })
-                    .strong(),
-            )
-            .fill(if history_selected {
-                palette.accent
-            } else {
-                palette.row
-            })
-            .stroke(egui::Stroke::new(
-                1.0,
-                if history_selected {
+                let history_selected = *selected == BottomTab::History;
+                let history_button = egui::Button::new(
+                    egui::RichText::new(history_label)
+                        .color(if history_selected {
+                            egui::Color32::WHITE
+                        } else {
+                            palette.text
+                        })
+                        .strong(),
+                )
+                .fill(if history_selected {
                     palette.accent
                 } else {
-                    palette.border
-                },
-            ))
-            .rounding(egui::Rounding::same(14.0))
-            .min_size(egui::vec2(tab_width, 40.0));
-            if ui.add(history_button).clicked() && !history_selected {
-                *selected = BottomTab::History;
-                changed = true;
-            }
+                    palette.row
+                })
+                .stroke(egui::Stroke::new(
+                    1.0,
+                    if history_selected {
+                        palette.accent
+                    } else {
+                        palette.border
+                    },
+                ))
+                .rounding(egui::Rounding::same(6.0))
+                .min_size(egui::vec2(tab_width, 40.0));
+                if ui.add(history_button).clicked() && !history_selected {
+                    *selected = BottomTab::History;
+                    changed = true;
+                }
+            });
         });
-    });
     changed
 }
 
@@ -1133,87 +1230,97 @@ fn render_settings_tab_bar(
     palette: ThemePalette,
 ) -> bool {
     let mut changed = false;
-    soft_card_frame(palette).show(ui, |ui| {
-        let tab_width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(140.0);
-        ui.horizontal(|ui| {
-            for tab in [SettingsTab::Config, SettingsTab::Appearance] {
-                let is_selected = *selected == tab;
-                let button = egui::Button::new(
-                    egui::RichText::new(tab.label())
-                        .color(if is_selected {
-                            egui::Color32::WHITE
-                        } else {
-                            palette.text
-                        })
-                        .strong(),
-                )
-                .fill(if is_selected {
-                    palette.accent
-                } else {
-                    palette.row
-                })
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    if is_selected {
+    egui::Frame::none()
+        .fill(palette.card)
+        .stroke(egui::Stroke::new(1.0, palette.border))
+        .rounding(egui::Rounding::same(8.0))
+        .inner_margin(egui::Margin::same(4.0))
+        .show(ui, |ui| {
+            let tab_width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(140.0);
+            ui.horizontal(|ui| {
+                for tab in [SettingsTab::Config, SettingsTab::Appearance] {
+                    let is_selected = *selected == tab;
+                    let button = egui::Button::new(
+                        egui::RichText::new(tab.label())
+                            .color(if is_selected {
+                                egui::Color32::WHITE
+                            } else {
+                                palette.text
+                            })
+                            .strong(),
+                    )
+                    .fill(if is_selected {
                         palette.accent
                     } else {
-                        palette.border
-                    },
-                ))
-                .rounding(egui::Rounding::same(14.0))
-                .min_size(egui::vec2(tab_width, 40.0));
-                if ui.add(button).clicked() && !is_selected {
-                    *selected = tab;
-                    changed = true;
+                        palette.row
+                    })
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        if is_selected {
+                            palette.accent
+                        } else {
+                            palette.border
+                        },
+                    ))
+                    .rounding(egui::Rounding::same(6.0))
+                    .min_size(egui::vec2(tab_width, 40.0));
+                    if ui.add(button).clicked() && !is_selected {
+                        *selected = tab;
+                        changed = true;
+                    }
                 }
-            }
+            });
         });
-    });
     changed
 }
 
 fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemePalette) -> bool {
     let mut changed = false;
-    soft_card_frame(palette).show(ui, |ui| {
-        ui.horizontal_wrapped(|ui| {
-            for tab in [
-                AppTab::Overview,
-                AppTab::Upload,
-                AppTab::Activity,
-                AppTab::Settings,
-            ] {
-                let is_selected = *selected == tab;
-                let button = egui::Button::new(
-                    egui::RichText::new(tab.label())
-                        .color(if is_selected {
-                            egui::Color32::WHITE
-                        } else {
-                            palette.text
-                        })
-                        .strong(),
-                )
-                .fill(if is_selected {
-                    palette.accent
-                } else {
-                    palette.row
-                })
-                .stroke(egui::Stroke::new(
-                    1.0,
-                    if is_selected {
+    egui::Frame::none()
+        .fill(palette.card)
+        .stroke(egui::Stroke::new(1.0, palette.border))
+        .rounding(egui::Rounding::same(8.0))
+        .inner_margin(egui::Margin::same(4.0))
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for tab in [
+                    AppTab::Overview,
+                    AppTab::Upload,
+                    AppTab::Activity,
+                    AppTab::Settings,
+                ] {
+                    let is_selected = *selected == tab;
+                    let button = egui::Button::new(
+                        egui::RichText::new(tab.label())
+                            .color(if is_selected {
+                                egui::Color32::WHITE
+                            } else {
+                                palette.text
+                            })
+                            .strong(),
+                    )
+                    .fill(if is_selected {
                         palette.accent
                     } else {
-                        palette.border
-                    },
-                ))
-                .rounding(egui::Rounding::same(14.0))
-                .min_size(egui::vec2(100.0, 40.0));
-                if ui.add(button).clicked() && !is_selected {
-                    *selected = tab;
-                    changed = true;
+                        palette.row
+                    })
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        if is_selected {
+                            palette.accent
+                        } else {
+                            palette.border
+                        },
+                    ))
+                    .rounding(egui::Rounding::same(6.0))
+                    .min_size(egui::vec2(100.0, 40.0));
+                    if ui.add(button).clicked() && !is_selected {
+                        *selected = tab;
+                        changed = true;
+                    }
                 }
-            }
+            });
         });
-    });
     changed
 }
 
@@ -1232,8 +1339,8 @@ fn build_theme_style(theme: egui::Theme, accent: AccentColor) -> egui::Style {
     style.visuals.extreme_bg_color = palette.soft;
     style.visuals.faint_bg_color = palette.row;
     style.visuals.code_bg_color = palette.row;
-    style.visuals.window_rounding = egui::Rounding::same(24.0);
-    style.visuals.menu_rounding = egui::Rounding::same(18.0);
+    style.visuals.window_rounding = egui::Rounding::same(8.0);
+    style.visuals.menu_rounding = egui::Rounding::same(8.0);
     style.visuals.window_shadow = egui::Shadow {
         offset: egui::vec2(0.0, 18.0),
         blur: 48.0,
@@ -1250,7 +1357,7 @@ fn build_theme_style(theme: egui::Theme, accent: AccentColor) -> egui::Style {
     style.visuals.selection.bg_fill = palette.accent;
     style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
     style.visuals.button_frame = true;
-    style.visuals.widgets.noninteractive.rounding = egui::Rounding::same(16.0);
+    style.visuals.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
     style.visuals.widgets.noninteractive.bg_fill = palette.card;
     style.visuals.widgets.noninteractive.weak_bg_fill = palette.soft;
     style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, palette.border);
@@ -1321,24 +1428,30 @@ fn paint_background(ctx: &egui::Context, palette: ThemePalette) {
     let rect = ctx.screen_rect();
     let painter = ctx.layer_painter(egui::LayerId::background());
     painter.rect_filled(rect, 0.0, palette.bg);
-    painter.circle_filled(
-        egui::pos2(rect.left() + rect.width() * 0.18, rect.top() + 120.0),
-        180.0,
+
+    let top_band_height = (rect.height() * 0.24).clamp(120.0, 220.0);
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            rect.left_top(),
+            egui::pos2(rect.right(), rect.top() + top_band_height),
+        ),
+        0.0,
         palette.glow_a,
     );
-    painter.circle_filled(
-        egui::pos2(rect.right() - 150.0, rect.top() + 80.0),
-        140.0,
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.bottom() - 96.0),
+            rect.right_bottom(),
+        ),
+        0.0,
         palette.glow_b,
     );
-    painter.circle_filled(
-        egui::pos2(rect.right() - 120.0, rect.bottom() - 100.0),
-        220.0,
-        if ctx.theme() == egui::Theme::Dark {
-            egui::Color32::from_rgba_unmultiplied(52, 199, 89, 26)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(52, 199, 89, 16)
-        },
+    painter.line_segment(
+        [
+            egui::pos2(rect.left(), rect.top() + top_band_height),
+            egui::pos2(rect.right(), rect.top() + top_band_height),
+        ],
+        egui::Stroke::new(1.0, palette.border),
     );
 }
 
@@ -2224,7 +2337,7 @@ impl AppState {
         egui::Frame::none()
             .fill(banner_fill)
             .stroke(egui::Stroke::new(1.0, banner_stroke))
-            .rounding(egui::Rounding::same(18.0))
+            .rounding(egui::Rounding::same(8.0))
             .inner_margin(egui::Margin::same(14.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -2399,31 +2512,37 @@ impl AppState {
                         ] {
                             let is_selected = accent == candidate;
                             let candidate_color = accent_color(candidate);
-                            let button = egui::Button::new(
-                                egui::RichText::new(candidate.label())
-                                    .color(if is_selected {
-                                        egui::Color32::WHITE
-                                    } else {
-                                        palette.text
-                                    })
-                                    .strong(),
-                            )
-                            .fill(if is_selected {
-                                candidate_color
-                            } else {
+                            let (rect, response) = ui
+                                .allocate_exact_size(egui::vec2(42.0, 34.0), egui::Sense::click());
+                            let response = response.on_hover_text(candidate.label());
+                            let fill = if is_selected {
                                 accent_color_soft(candidate, ui.visuals().dark_mode)
-                            })
-                            .stroke(egui::Stroke::new(
-                                1.0,
-                                if is_selected {
-                                    candidate_color
-                                } else {
-                                    palette.border
-                                },
-                            ))
-                            .rounding(egui::Rounding::same(999.0))
-                            .min_size(egui::vec2(92.0, 34.0));
-                            if ui.add(button).clicked() && !is_selected {
+                            } else {
+                                palette.row
+                            };
+                            ui.painter().rect(
+                                rect,
+                                egui::Rounding::same(8.0),
+                                fill,
+                                egui::Stroke::new(
+                                    if is_selected { 1.5 } else { 1.0 },
+                                    if is_selected {
+                                        candidate_color
+                                    } else {
+                                        palette.border
+                                    },
+                                ),
+                            );
+                            ui.painter()
+                                .circle_filled(rect.center(), 8.5, candidate_color);
+                            if is_selected {
+                                ui.painter().circle_stroke(
+                                    rect.center(),
+                                    12.0,
+                                    egui::Stroke::new(2.0, egui::Color32::WHITE),
+                                );
+                            }
+                            if response.clicked() && !is_selected {
                                 accent = candidate;
                                 self.config.accent_color = Some(candidate);
                                 self.config_dirty = true;
@@ -2497,22 +2616,13 @@ impl AppState {
                 BottomTab::Tasks => {
                     if self.tasks.is_empty() {
                         soft_card_frame(palette).show(ui, |ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.label(egui::RichText::new("📷").size(28.0));
-                                ui.label(
-                                    egui::RichText::new("还没有上传任务")
-                                        .size(18.0)
-                                        .color(palette.text)
-                                        .strong(),
-                                );
-                                ui.label(
-                                    egui::RichText::new(
-                                        "截图后点击上传，或开启自动监听让应用自动接手。",
-                                    )
-                                    .size(13.0)
-                                    .color(palette.muted),
-                                );
-                            });
+                            render_empty_state(
+                                ui,
+                                EmptyStateIcon::Upload,
+                                "还没有上传任务",
+                                "截图后点击上传，或开启自动监听让应用自动接手。",
+                                palette,
+                            );
                         });
                     } else {
                         let mut retry_id: Option<usize> = None;
@@ -2601,7 +2711,7 @@ impl AppState {
                             egui::Frame::none()
                                 .fill(card_fill)
                                 .stroke(egui::Stroke::new(1.0, card_stroke))
-                                .rounding(egui::Rounding::same(18.0))
+                                .rounding(egui::Rounding::same(8.0))
                                 .inner_margin(egui::Margin::same(14.0))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
@@ -2746,20 +2856,13 @@ impl AppState {
                 BottomTab::History => {
                     if self.history.is_empty() {
                         soft_card_frame(palette).show(ui, |ui| {
-                            ui.vertical_centered(|ui| {
-                                ui.label(egui::RichText::new("🕘").size(28.0));
-                                ui.label(
-                                    egui::RichText::new("还没有上传历史")
-                                        .size(18.0)
-                                        .color(palette.text)
-                                        .strong(),
-                                );
-                                ui.label(
-                                    egui::RichText::new("成功上传后，这里会保留最近的链接记录。")
-                                        .size(13.0)
-                                        .color(palette.muted),
-                                );
-                            });
+                            render_empty_state(
+                                ui,
+                                EmptyStateIcon::History,
+                                "还没有上传历史",
+                                "成功上传后，这里会保留最近的链接记录。",
+                                palette,
+                            );
                         });
                     } else {
                         let mut to_delete: Option<i64> = None;
@@ -2769,7 +2872,7 @@ impl AppState {
                             egui::Frame::none()
                                 .fill(palette.row)
                                 .stroke(egui::Stroke::new(1.0, palette.border))
-                                .rounding(egui::Rounding::same(18.0))
+                                .rounding(egui::Rounding::same(8.0))
                                 .inner_margin(egui::Margin::same(14.0))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
@@ -3097,14 +3200,14 @@ impl eframe::App for AppState {
                                         render_window_controls(ui);
                                         ui.add_space(8.0);
                                         ui.label(
-                                            egui::RichText::new("剪贴板上传")
+                                            egui::RichText::new("剪贴板图片上传")
                                                 .size(31.0)
                                                 .color(palette.text)
                                                 .strong(),
                                         );
                                         ui.label(
                                             egui::RichText::new(
-                                                "多页签工作台，支持浅色、深色和跟随系统。",
+                                                "截图、上传、复制链接集中在一个桌面工作台。",
                                             )
                                             .size(14.5)
                                             .color(palette.muted),
@@ -3193,6 +3296,43 @@ impl eframe::App for AppState {
                                                 },
                                             );
                                         });
+                                        ui.add_space(10.0);
+                                        ui.horizontal_wrapped(|ui| {
+                                            let upload_text = if has_uploading {
+                                                "上传中..."
+                                            } else {
+                                                "上传剪贴板"
+                                            };
+                                            if ui
+                                                .add_enabled(
+                                                    !has_uploading,
+                                                    primary_button(upload_text, palette)
+                                                        .min_size(egui::vec2(132.0, 42.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.trigger_upload();
+                                            }
+                                            if ui
+                                                .add(
+                                                    secondary_button("活动记录", palette)
+                                                        .min_size(egui::vec2(112.0, 42.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.active_tab = AppTab::Activity;
+                                                self.bottom_tab = BottomTab::Tasks;
+                                            }
+                                            if ui
+                                                .add(
+                                                    secondary_button("设置", palette)
+                                                        .min_size(egui::vec2(82.0, 42.0)),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.active_tab = AppTab::Settings;
+                                            }
+                                        });
                                     });
                                     columns[1].vertical(|ui| {
                                         render_panel_header(
@@ -3232,14 +3372,14 @@ impl eframe::App for AppState {
                                     render_window_controls(ui);
                                     ui.add_space(8.0);
                                     ui.label(
-                                        egui::RichText::new("剪贴板上传")
+                                        egui::RichText::new("剪贴板图片上传")
                                             .size(31.0)
                                             .color(palette.text)
                                             .strong(),
                                     );
                                     ui.label(
                                         egui::RichText::new(
-                                            "多页签工作台，支持浅色、深色和跟随系统。",
+                                            "截图、上传、复制链接集中在一个桌面工作台。",
                                         )
                                         .size(14.5)
                                         .color(palette.muted),
@@ -3288,6 +3428,43 @@ impl eframe::App for AppState {
                                                 palette.text
                                             },
                                         );
+                                    });
+                                    ui.add_space(10.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        let upload_text = if has_uploading {
+                                            "上传中..."
+                                        } else {
+                                            "上传剪贴板"
+                                        };
+                                        if ui
+                                            .add_enabled(
+                                                !has_uploading,
+                                                primary_button(upload_text, palette)
+                                                    .min_size(egui::vec2(132.0, 42.0)),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.trigger_upload();
+                                        }
+                                        if ui
+                                            .add(
+                                                secondary_button("活动记录", palette)
+                                                    .min_size(egui::vec2(112.0, 42.0)),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.active_tab = AppTab::Activity;
+                                            self.bottom_tab = BottomTab::Tasks;
+                                        }
+                                        if ui
+                                            .add(
+                                                secondary_button("设置", palette)
+                                                    .min_size(egui::vec2(82.0, 42.0)),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.active_tab = AppTab::Settings;
+                                        }
                                     });
                                     ui.columns(3, |stats| {
                                         render_metric_tile(
