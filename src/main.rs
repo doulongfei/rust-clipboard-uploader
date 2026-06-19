@@ -668,29 +668,29 @@ fn theme_palette(theme: egui::Theme, accent: AccentColor) -> ThemePalette {
     match theme {
         egui::Theme::Light => ThemePalette {
             accent,
-            bg: egui::Color32::from_rgb(236, 239, 244),
+            bg: egui::Color32::from_rgb(239, 242, 247),
             card: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 248),
-            soft: egui::Color32::from_rgb(248, 249, 251),
-            row: egui::Color32::from_rgb(243, 245, 249),
-            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 28),
+            soft: egui::Color32::from_rgb(250, 251, 253),
+            row: egui::Color32::from_rgb(246, 248, 251),
+            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 14),
             text: egui::Color32::from_rgb(24, 29, 39),
-            muted: egui::Color32::from_rgb(93, 102, 118),
-            shadow: egui::Color32::from_black_alpha(12),
-            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 12),
-            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 180),
+            muted: egui::Color32::from_rgb(100, 109, 124),
+            shadow: egui::Color32::from_black_alpha(8),
+            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 8),
+            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 96),
         },
         egui::Theme::Dark => ThemePalette {
             accent,
-            bg: egui::Color32::from_rgb(14, 16, 20),
-            card: egui::Color32::from_rgba_unmultiplied(24, 27, 33, 246),
-            soft: egui::Color32::from_rgb(31, 35, 43),
-            row: egui::Color32::from_rgb(36, 41, 50),
-            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 26),
-            text: egui::Color32::from_rgb(241, 244, 248),
-            muted: egui::Color32::from_rgb(156, 165, 180),
-            shadow: egui::Color32::from_black_alpha(42),
-            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 18),
-            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 10),
+            bg: egui::Color32::from_rgb(8, 11, 16),
+            card: egui::Color32::from_rgba_unmultiplied(17, 21, 28, 246),
+            soft: egui::Color32::from_rgb(22, 27, 35),
+            row: egui::Color32::from_rgb(27, 33, 42),
+            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 12),
+            text: egui::Color32::from_rgb(235, 239, 245),
+            muted: egui::Color32::from_rgb(132, 142, 158),
+            shadow: egui::Color32::from_black_alpha(34),
+            glow_a: egui::Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), 10),
+            glow_b: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 6),
         },
     }
 }
@@ -701,12 +701,12 @@ fn panel_card_frame(palette: ThemePalette) -> egui::Frame {
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
         .shadow(egui::Shadow {
-            offset: egui::vec2(0.0, 8.0),
-            blur: 20.0,
+            offset: egui::vec2(0.0, 6.0),
+            blur: 18.0,
             spread: 0.0,
             color: palette.shadow,
         })
-        .inner_margin(egui::Margin::same(18.0))
+        .inner_margin(egui::Margin::same(16.0))
 }
 
 fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
@@ -714,7 +714,15 @@ fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
         .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(14.0))
+        .inner_margin(egui::Margin::same(12.0))
+}
+
+fn surface_frame(palette: ThemePalette) -> egui::Frame {
+    egui::Frame::none()
+        .fill(palette.card)
+        .stroke(egui::Stroke::new(1.0, palette.border))
+        .rounding(egui::Rounding::same(8.0))
+        .inner_margin(egui::Margin::symmetric(18.0, 16.0))
 }
 
 fn setting_row_frame(palette: ThemePalette) -> egui::Frame {
@@ -722,7 +730,7 @@ fn setting_row_frame(palette: ThemePalette) -> egui::Frame {
         .fill(palette.row)
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
 }
 
 fn pill_frame(fill: egui::Color32, stroke: egui::Color32) -> egui::Frame {
@@ -730,7 +738,7 @@ fn pill_frame(fill: egui::Color32, stroke: egui::Color32) -> egui::Frame {
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, stroke))
         .rounding(egui::Rounding::same(999.0))
-        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
 }
 
 fn render_pill(ui: &mut egui::Ui, text: &str, fill: egui::Color32, text_color: egui::Color32) {
@@ -752,21 +760,24 @@ fn render_metric_tile(
     palette: ThemePalette,
 ) {
     soft_card_frame(palette)
-        .fill(if ui.visuals().dark_mode {
-            tint.gamma_multiply(0.22)
-        } else {
-            tint.gamma_multiply(0.10)
-        })
-        .stroke(egui::Stroke::new(1.0, tint.gamma_multiply(0.35)))
+        .fill(palette.soft)
+        .stroke(egui::Stroke::new(1.0, palette.border))
         .show(ui, |ui| {
-            ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(value)
-                        .size(24.0)
-                        .color(palette.text)
-                        .strong(),
-                );
-                ui.label(egui::RichText::new(label).size(12.5).color(palette.muted));
+            ui.horizontal(|ui| {
+                let (bar_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(3.0, 42.0), egui::Sense::hover());
+                ui.painter()
+                    .rect_filled(bar_rect, egui::Rounding::same(2.0), tint);
+                ui.add_space(4.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(value)
+                            .size(21.0)
+                            .color(palette.text)
+                            .strong(),
+                    );
+                    ui.label(egui::RichText::new(label).size(12.0).color(palette.muted));
+                });
             });
         });
 }
@@ -1153,10 +1164,10 @@ fn render_segmented_tab_bar(
 ) -> bool {
     let mut changed = false;
     egui::Frame::none()
-        .fill(palette.card)
+        .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(4.0))
+        .inner_margin(egui::Margin::same(3.0))
         .show(ui, |ui| {
             let tab_width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(120.0);
             ui.horizontal(|ui| {
@@ -1173,7 +1184,7 @@ fn render_segmented_tab_bar(
                 .fill(if task_selected {
                     palette.accent
                 } else {
-                    palette.row
+                    egui::Color32::TRANSPARENT
                 })
                 .stroke(egui::Stroke::new(
                     1.0,
@@ -1184,7 +1195,7 @@ fn render_segmented_tab_bar(
                     },
                 ))
                 .rounding(egui::Rounding::same(6.0))
-                .min_size(egui::vec2(tab_width, 40.0));
+                .min_size(egui::vec2(tab_width, 34.0));
                 if ui.add(task_button).clicked() && !task_selected {
                     *selected = BottomTab::Tasks;
                     changed = true;
@@ -1203,7 +1214,7 @@ fn render_segmented_tab_bar(
                 .fill(if history_selected {
                     palette.accent
                 } else {
-                    palette.row
+                    egui::Color32::TRANSPARENT
                 })
                 .stroke(egui::Stroke::new(
                     1.0,
@@ -1214,7 +1225,7 @@ fn render_segmented_tab_bar(
                     },
                 ))
                 .rounding(egui::Rounding::same(6.0))
-                .min_size(egui::vec2(tab_width, 40.0));
+                .min_size(egui::vec2(tab_width, 34.0));
                 if ui.add(history_button).clicked() && !history_selected {
                     *selected = BottomTab::History;
                     changed = true;
@@ -1231,10 +1242,10 @@ fn render_settings_tab_bar(
 ) -> bool {
     let mut changed = false;
     egui::Frame::none()
-        .fill(palette.card)
+        .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(4.0))
+        .inner_margin(egui::Margin::same(3.0))
         .show(ui, |ui| {
             let tab_width = ((ui.available_width() - ui.spacing().item_spacing.x) / 2.0).max(140.0);
             ui.horizontal(|ui| {
@@ -1252,7 +1263,7 @@ fn render_settings_tab_bar(
                     .fill(if is_selected {
                         palette.accent
                     } else {
-                        palette.row
+                        egui::Color32::TRANSPARENT
                     })
                     .stroke(egui::Stroke::new(
                         1.0,
@@ -1263,7 +1274,7 @@ fn render_settings_tab_bar(
                         },
                     ))
                     .rounding(egui::Rounding::same(6.0))
-                    .min_size(egui::vec2(tab_width, 40.0));
+                    .min_size(egui::vec2(tab_width, 34.0));
                     if ui.add(button).clicked() && !is_selected {
                         *selected = tab;
                         changed = true;
@@ -1277,10 +1288,10 @@ fn render_settings_tab_bar(
 fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemePalette) -> bool {
     let mut changed = false;
     egui::Frame::none()
-        .fill(palette.card)
+        .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(4.0))
+        .inner_margin(egui::Margin::same(3.0))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 for tab in [
@@ -1302,7 +1313,7 @@ fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemeP
                     .fill(if is_selected {
                         palette.accent
                     } else {
-                        palette.row
+                        egui::Color32::TRANSPARENT
                     })
                     .stroke(egui::Stroke::new(
                         1.0,
@@ -1313,7 +1324,7 @@ fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemeP
                         },
                     ))
                     .rounding(egui::Rounding::same(6.0))
-                    .min_size(egui::vec2(100.0, 40.0));
+                    .min_size(egui::vec2(92.0, 34.0));
                     if ui.add(button).clicked() && !is_selected {
                         *selected = tab;
                         changed = true;
@@ -2554,6 +2565,179 @@ impl AppState {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn render_overview_page(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        palette: ThemePalette,
+        failed_count: usize,
+        success_count: usize,
+        theme_mode: ThemeMode,
+        accent_choice: AccentColor,
+        close_to_tray: bool,
+        auto_copy: bool,
+        notify_on_success: bool,
+    ) {
+        let wide = ui.available_width() > 760.0;
+
+        let render_status = |ui: &mut egui::Ui, this: &mut Self| {
+            surface_frame(palette).show(ui, |ui| {
+                render_panel_header(ui, "运行摘要", "当前状态和最近输出。", palette);
+                ui.add_space(10.0);
+
+                soft_card_frame(palette).show(ui, |ui| {
+                    render_summary_row(
+                        ui,
+                        "失败任务",
+                        &failed_count.to_string(),
+                        if failed_count > 0 {
+                            apple_red()
+                        } else {
+                            palette.muted
+                        },
+                        palette,
+                    );
+                    render_summary_row(
+                        ui,
+                        "已完成任务",
+                        &success_count.to_string(),
+                        apple_green(),
+                        palette,
+                    );
+                    render_summary_row(
+                        ui,
+                        "系统主题",
+                        match ctx.system_theme() {
+                            Some(egui::Theme::Dark) => "深色",
+                            Some(egui::Theme::Light) => "浅色",
+                            None => "未知",
+                        },
+                        apple_orange(),
+                        palette,
+                    );
+                });
+
+                ui.add_space(8.0);
+
+                soft_card_frame(palette).show(ui, |ui| {
+                    render_panel_header(ui, "最近链接", "最近一次成功上传的地址。", palette);
+                    ui.add_space(6.0);
+                    if let Some(url) = this.last_url.clone() {
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.hyperlink_to("打开", &url);
+                                    if ui.add(secondary_button("复制", palette)).clicked()
+                                        && copy_text_to_clipboard(&url)
+                                    {
+                                        this.set_status_auto_clear(
+                                            false,
+                                            "已复制到剪贴板".to_string(),
+                                        );
+                                    }
+                                },
+                            );
+                        });
+                        ui.label(egui::RichText::new(url).monospace().color(palette.accent));
+                    } else {
+                        ui.label(
+                            egui::RichText::new("还没有成功上传的链接。")
+                                .size(12.5)
+                                .color(palette.muted),
+                        );
+                    }
+                });
+            });
+        };
+
+        let render_preferences = |ui: &mut egui::Ui, this: &mut Self| {
+            surface_frame(palette).show(ui, |ui| {
+                render_panel_header(ui, "桌面行为", "常用偏好和快捷入口。", palette);
+                ui.add_space(10.0);
+                soft_card_frame(palette).show(ui, |ui| {
+                    render_summary_row(ui, "当前主题", theme_mode.label(), palette.accent, palette);
+                    render_summary_row(
+                        ui,
+                        "主题色",
+                        accent_choice.label(),
+                        palette.accent,
+                        palette,
+                    );
+                    render_summary_row(
+                        ui,
+                        "自动复制",
+                        if auto_copy { "开启" } else { "关闭" },
+                        if auto_copy {
+                            apple_green()
+                        } else {
+                            palette.muted
+                        },
+                        palette,
+                    );
+                    render_summary_row(
+                        ui,
+                        "系统通知",
+                        if notify_on_success {
+                            "开启"
+                        } else {
+                            "关闭"
+                        },
+                        if notify_on_success {
+                            palette.accent
+                        } else {
+                            palette.muted
+                        },
+                        palette,
+                    );
+                    render_summary_row(
+                        ui,
+                        "关闭窗口",
+                        if close_to_tray {
+                            "后台运行"
+                        } else {
+                            "直接退出"
+                        },
+                        apple_orange(),
+                        palette,
+                    );
+                });
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add(
+                            secondary_button("活动记录", palette).min_size(egui::vec2(104.0, 38.0)),
+                        )
+                        .clicked()
+                    {
+                        this.active_tab = AppTab::Activity;
+                        this.bottom_tab = BottomTab::Tasks;
+                    }
+                    if ui
+                        .add(
+                            secondary_button("打开设置", palette).min_size(egui::vec2(104.0, 38.0)),
+                        )
+                        .clicked()
+                    {
+                        this.active_tab = AppTab::Settings;
+                        this.settings_tab = SettingsTab::Config;
+                    }
+                });
+            });
+        };
+
+        if wide {
+            ui.columns(2, |columns| {
+                render_status(&mut columns[0], self);
+                render_preferences(&mut columns[1], self);
+            });
+        } else {
+            render_status(ui, self);
+            render_preferences(ui, self);
+        }
+    }
+
     fn render_activity_page(
         &mut self,
         ui: &mut egui::Ui,
@@ -3192,16 +3376,16 @@ impl eframe::App for AppState {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(18.0, 18.0);
 
-                        panel_card_frame(palette).show(ui, |ui| {
+                        surface_frame(palette).show(ui, |ui| {
                             let hero_wide = ui.available_width() > 680.0;
                             if hero_wide {
                                 ui.columns(2, |columns| {
                                     columns[0].vertical(|ui| {
                                         render_window_controls(ui);
-                                        ui.add_space(8.0);
+                                        ui.add_space(10.0);
                                         ui.label(
                                             egui::RichText::new("剪贴板图片上传")
-                                                .size(31.0)
+                                                .size(29.0)
                                                 .color(palette.text)
                                                 .strong(),
                                         );
@@ -3212,7 +3396,7 @@ impl eframe::App for AppState {
                                             .size(14.5)
                                             .color(palette.muted),
                                         );
-                                        ui.add_space(6.0);
+                                        ui.add_space(8.0);
                                         let upload_badge_text = if has_uploading {
                                             format!("{} 个任务处理中", uploading_count)
                                         } else {
@@ -3282,21 +3466,31 @@ impl eframe::App for AppState {
                                                 } else {
                                                     "配置已保存"
                                                 },
-                                                apple_orange().gamma_multiply(
-                                                    if ui.visuals().dark_mode {
-                                                        0.25
-                                                    } else {
-                                                        0.12
-                                                    },
-                                                ),
+                                                if self.config_dirty {
+                                                    apple_orange().gamma_multiply(
+                                                        if ui.visuals().dark_mode {
+                                                            0.25
+                                                        } else {
+                                                            0.12
+                                                        },
+                                                    )
+                                                } else {
+                                                    apple_green().gamma_multiply(
+                                                        if ui.visuals().dark_mode {
+                                                            0.20
+                                                        } else {
+                                                            0.10
+                                                        },
+                                                    )
+                                                },
                                                 if self.config_dirty {
                                                     apple_orange()
                                                 } else {
-                                                    palette.text
+                                                    apple_green()
                                                 },
                                             );
                                         });
-                                        ui.add_space(10.0);
+                                        ui.add_space(12.0);
                                         ui.horizontal_wrapped(|ui| {
                                             let upload_text = if has_uploading {
                                                 "上传中..."
@@ -3307,7 +3501,7 @@ impl eframe::App for AppState {
                                                 .add_enabled(
                                                     !has_uploading,
                                                     primary_button(upload_text, palette)
-                                                        .min_size(egui::vec2(132.0, 42.0)),
+                                                        .min_size(egui::vec2(124.0, 38.0)),
                                                 )
                                                 .clicked()
                                             {
@@ -3316,7 +3510,7 @@ impl eframe::App for AppState {
                                             if ui
                                                 .add(
                                                     secondary_button("活动记录", palette)
-                                                        .min_size(egui::vec2(112.0, 42.0)),
+                                                        .min_size(egui::vec2(100.0, 38.0)),
                                                 )
                                                 .clicked()
                                             {
@@ -3326,7 +3520,7 @@ impl eframe::App for AppState {
                                             if ui
                                                 .add(
                                                     secondary_button("设置", palette)
-                                                        .min_size(egui::vec2(82.0, 42.0)),
+                                                        .min_size(egui::vec2(76.0, 38.0)),
                                                 )
                                                 .clicked()
                                             {
@@ -3370,10 +3564,10 @@ impl eframe::App for AppState {
                             } else {
                                 ui.vertical(|ui| {
                                     render_window_controls(ui);
-                                    ui.add_space(8.0);
+                                    ui.add_space(10.0);
                                     ui.label(
                                         egui::RichText::new("剪贴板图片上传")
-                                            .size(31.0)
+                                            .size(29.0)
                                             .color(palette.text)
                                             .strong(),
                                     );
@@ -3419,17 +3613,31 @@ impl eframe::App for AppState {
                                             } else {
                                                 "配置已保存"
                                             },
-                                            apple_orange().gamma_multiply(
-                                                if ui.visuals().dark_mode { 0.25 } else { 0.12 },
-                                            ),
+                                            if self.config_dirty {
+                                                apple_orange().gamma_multiply(
+                                                    if ui.visuals().dark_mode {
+                                                        0.25
+                                                    } else {
+                                                        0.12
+                                                    },
+                                                )
+                                            } else {
+                                                apple_green().gamma_multiply(
+                                                    if ui.visuals().dark_mode {
+                                                        0.20
+                                                    } else {
+                                                        0.10
+                                                    },
+                                                )
+                                            },
                                             if self.config_dirty {
                                                 apple_orange()
                                             } else {
-                                                palette.text
+                                                apple_green()
                                             },
                                         );
                                     });
-                                    ui.add_space(10.0);
+                                    ui.add_space(12.0);
                                     ui.horizontal_wrapped(|ui| {
                                         let upload_text = if has_uploading {
                                             "上传中..."
@@ -3440,7 +3648,7 @@ impl eframe::App for AppState {
                                             .add_enabled(
                                                 !has_uploading,
                                                 primary_button(upload_text, palette)
-                                                    .min_size(egui::vec2(132.0, 42.0)),
+                                                    .min_size(egui::vec2(124.0, 38.0)),
                                             )
                                             .clicked()
                                         {
@@ -3449,7 +3657,7 @@ impl eframe::App for AppState {
                                         if ui
                                             .add(
                                                 secondary_button("活动记录", palette)
-                                                    .min_size(egui::vec2(112.0, 42.0)),
+                                                    .min_size(egui::vec2(100.0, 38.0)),
                                             )
                                             .clicked()
                                         {
@@ -3459,7 +3667,7 @@ impl eframe::App for AppState {
                                         if ui
                                             .add(
                                                 secondary_button("设置", palette)
-                                                    .min_size(egui::vec2(82.0, 42.0)),
+                                                    .min_size(egui::vec2(76.0, 38.0)),
                                             )
                                             .clicked()
                                         {
@@ -3497,139 +3705,18 @@ impl eframe::App for AppState {
 
                         match self.active_tab {
                             AppTab::Overview => {
-                                let stacked_cards = ui.available_width() <= 760.0;
-                                if stacked_cards {
-                                    panel_card_frame(palette).show(ui, |ui| {
-                                        self.render_control_panel(
-                                            ui,
-                                            palette,
-                                            has_uploading,
-                                            success_count,
-                                            close_to_tray,
-                                            auto_copy,
-                                            notify_on_success,
-                                        );
-                                    });
-                                    panel_card_frame(palette).show(ui, |ui| {
-                                        render_panel_header(
-                                            ui,
-                                            "总览",
-                                            "关键状态和快捷入口。",
-                                            palette,
-                                        );
-                                        ui.add_space(8.0);
-                                        soft_card_frame(palette).show(ui, |ui| {
-                                            render_summary_row(
-                                                ui,
-                                                "当前主题",
-                                                theme_mode.label(),
-                                                palette.accent,
-                                                palette,
-                                            );
-                                            render_summary_row(
-                                                ui,
-                                                "主题色",
-                                                accent_choice.label(),
-                                                palette.accent,
-                                                palette,
-                                            );
-                                            render_summary_row(
-                                                ui,
-                                                "失败任务",
-                                                &failed_count.to_string(),
-                                                apple_red(),
-                                                palette,
-                                            );
-                                        });
-                                        ui.horizontal(|ui| {
-                                            if ui
-                                                .add(secondary_button("前往活动", palette))
-                                                .clicked()
-                                            {
-                                                self.active_tab = AppTab::Activity;
-                                            }
-                                            if ui
-                                                .add(secondary_button("前往设置", palette))
-                                                .clicked()
-                                            {
-                                                self.active_tab = AppTab::Settings;
-                                                self.settings_tab = SettingsTab::Config;
-                                            }
-                                        });
-                                    });
-                                } else {
-                                    ui.columns(2, |columns| {
-                                        panel_card_frame(palette).show(&mut columns[0], |ui| {
-                                            self.render_control_panel(
-                                                ui,
-                                                palette,
-                                                has_uploading,
-                                                success_count,
-                                                close_to_tray,
-                                                auto_copy,
-                                                notify_on_success,
-                                            );
-                                        });
-                                        panel_card_frame(palette).show(&mut columns[1], |ui| {
-                                            render_panel_header(
-                                                ui,
-                                                "总览",
-                                                "关键状态和快捷入口。",
-                                                palette,
-                                            );
-                                            ui.add_space(8.0);
-                                            soft_card_frame(palette).show(ui, |ui| {
-                                                render_summary_row(
-                                                    ui,
-                                                    "当前主题",
-                                                    theme_mode.label(),
-                                                    palette.accent,
-                                                    palette,
-                                                );
-                                                render_summary_row(
-                                                    ui,
-                                                    "主题色",
-                                                    accent_choice.label(),
-                                                    palette.accent,
-                                                    palette,
-                                                );
-                                                render_summary_row(
-                                                    ui,
-                                                    "失败任务",
-                                                    &failed_count.to_string(),
-                                                    apple_red(),
-                                                    palette,
-                                                );
-                                                render_summary_row(
-                                                    ui,
-                                                    "系统主题",
-                                                    match ctx.system_theme() {
-                                                        Some(egui::Theme::Dark) => "深色",
-                                                        Some(egui::Theme::Light) => "浅色",
-                                                        None => "未知",
-                                                    },
-                                                    apple_orange(),
-                                                    palette,
-                                                );
-                                            });
-                                            ui.horizontal(|ui| {
-                                                if ui
-                                                    .add(secondary_button("前往活动", palette))
-                                                    .clicked()
-                                                {
-                                                    self.active_tab = AppTab::Activity;
-                                                }
-                                                if ui
-                                                    .add(secondary_button("前往设置", palette))
-                                                    .clicked()
-                                                {
-                                                    self.active_tab = AppTab::Settings;
-                                                    self.settings_tab = SettingsTab::Config;
-                                                }
-                                            });
-                                        });
-                                    });
-                                }
+                                self.render_overview_page(
+                                    ui,
+                                    ctx,
+                                    palette,
+                                    failed_count,
+                                    success_count,
+                                    theme_mode,
+                                    accent_choice,
+                                    close_to_tray,
+                                    auto_copy,
+                                    notify_on_success,
+                                );
                             }
                             AppTab::Upload => {
                                 panel_card_frame(palette).show(ui, |ui| {
