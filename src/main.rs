@@ -672,7 +672,7 @@ fn theme_palette(theme: egui::Theme, accent: AccentColor) -> ThemePalette {
             card: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 248),
             soft: egui::Color32::from_rgb(250, 251, 253),
             row: egui::Color32::from_rgb(246, 248, 251),
-            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 10),
+            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 8),
             text: egui::Color32::from_rgb(24, 29, 39),
             muted: egui::Color32::from_rgb(100, 109, 124),
             shadow: egui::Color32::from_black_alpha(8),
@@ -685,7 +685,7 @@ fn theme_palette(theme: egui::Theme, accent: AccentColor) -> ThemePalette {
             card: egui::Color32::from_rgba_unmultiplied(17, 21, 28, 246),
             soft: egui::Color32::from_rgb(22, 27, 35),
             row: egui::Color32::from_rgb(27, 33, 42),
-            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8),
+            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 6),
             text: egui::Color32::from_rgb(235, 239, 245),
             muted: egui::Color32::from_rgb(132, 142, 158),
             shadow: egui::Color32::from_black_alpha(34),
@@ -706,7 +706,7 @@ fn panel_card_frame(palette: ThemePalette) -> egui::Frame {
             spread: 0.0,
             color: palette.shadow,
         })
-        .inner_margin(egui::Margin::same(16.0))
+        .inner_margin(egui::Margin::same(14.0))
 }
 
 fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
@@ -714,7 +714,7 @@ fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
         .fill(palette.soft)
         .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(11.0))
+        .inner_margin(egui::Margin::same(10.0))
 }
 
 fn surface_frame(palette: ThemePalette) -> egui::Frame {
@@ -722,7 +722,7 @@ fn surface_frame(palette: ThemePalette) -> egui::Frame {
         .fill(palette.card)
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0))
 }
 
 fn setting_row_frame(palette: ThemePalette) -> egui::Frame {
@@ -763,21 +763,21 @@ fn render_metric_tile(
         .fill(palette.row)
         .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+        .inner_margin(egui::Margin::symmetric(8.0, 5.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(label).size(12.0).color(palette.muted));
+                ui.label(egui::RichText::new(label).size(11.5).color(palette.muted));
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(value)
-                        .size(14.5)
+                        .size(13.5)
                         .color(palette.text)
                         .strong(),
                 );
                 let (dot_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                    ui.allocate_exact_size(egui::vec2(5.0, 5.0), egui::Sense::hover());
                 ui.painter()
-                    .circle_filled(dot_rect.center(), 3.0, tint.gamma_multiply(0.9));
+                    .circle_filled(dot_rect.center(), 2.5, tint.gamma_multiply(0.9));
             });
         });
 }
@@ -790,11 +790,11 @@ fn render_plain_summary_row(
     palette: ThemePalette,
 ) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).size(13.5).color(palette.muted));
+        ui.label(egui::RichText::new(label).size(13.0).color(palette.muted));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 egui::RichText::new(value)
-                    .size(13.5)
+                    .size(13.0)
                     .color(value_color)
                     .strong(),
             );
@@ -809,22 +809,22 @@ fn render_status_dot(ui: &mut egui::Ui, color: egui::Color32) {
 
 fn render_window_controls(ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 10.0;
+        ui.spacing_mut().item_spacing.x = 8.0;
         egui::Frame::none()
             .fill(ui.visuals().selection.bg_fill)
             .rounding(egui::Rounding::same(8.0))
-            .inner_margin(egui::Margin::symmetric(8.0, 7.0))
+            .inner_margin(egui::Margin::symmetric(7.0, 6.0))
             .show(ui, |ui| {
                 ui.label(
                     egui::RichText::new("RCU")
-                        .size(12.0)
+                        .size(11.5)
                         .color(egui::Color32::WHITE)
                         .strong(),
                 );
             });
         ui.label(
             egui::RichText::new("Rust Clipboard Uploader")
-                .size(12.5)
+                .size(12.0)
                 .color(ui.visuals().weak_text_color()),
         );
     });
@@ -833,13 +833,13 @@ fn render_window_controls(ui: &mut egui::Ui) {
 fn render_panel_header(ui: &mut egui::Ui, title: &str, subtitle: &str, palette: ThemePalette) {
     ui.label(
         egui::RichText::new(title)
-            .size(18.5)
+            .size(17.5)
             .color(palette.text)
             .strong(),
     );
     ui.label(
         egui::RichText::new(subtitle)
-            .size(12.5)
+            .size(12.0)
             .color(palette.muted),
     );
 }
@@ -1036,13 +1036,14 @@ fn secondary_button(text: impl Into<String>, palette: ThemePalette) -> egui::But
 }
 
 fn primary_button(text: impl Into<String>, palette: ThemePalette) -> egui::Button<'static> {
+    let fill = palette.accent.gamma_multiply(0.92);
     egui::Button::new(
         egui::RichText::new(text.into())
             .color(egui::Color32::WHITE)
             .strong(),
     )
-    .fill(palette.accent)
-    .stroke(egui::Stroke::new(1.0, palette.accent))
+    .fill(fill)
+    .stroke(egui::Stroke::new(1.0, fill))
     .rounding(egui::Rounding::same(8.0))
 }
 
@@ -1113,6 +1114,11 @@ fn render_segmented_choice(
     palette: ThemePalette,
 ) -> bool {
     let mut changed = false;
+    let selected_fill =
+        palette
+            .accent
+            .gamma_multiply(if ui.visuals().dark_mode { 0.18 } else { 0.08 });
+    let selected_stroke = palette.accent.gamma_multiply(0.62);
     egui::Frame::none()
         .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
@@ -1125,21 +1131,21 @@ fn render_segmented_choice(
                     let button = egui::Button::new(
                         egui::RichText::new(*option)
                             .color(if is_selected {
-                                egui::Color32::WHITE
+                                palette.accent
                             } else {
                                 palette.text
                             })
                             .strong(),
                     )
                     .fill(if is_selected {
-                        palette.accent
+                        selected_fill
                     } else {
                         egui::Color32::TRANSPARENT
                     })
                     .stroke(egui::Stroke::new(
                         1.0,
                         if is_selected {
-                            palette.accent
+                            selected_stroke
                         } else {
                             egui::Color32::TRANSPARENT
                         },
@@ -1164,6 +1170,11 @@ fn render_segmented_tab_bar(
     palette: ThemePalette,
 ) -> bool {
     let mut changed = false;
+    let selected_fill =
+        palette
+            .accent
+            .gamma_multiply(if ui.visuals().dark_mode { 0.18 } else { 0.08 });
+    let selected_stroke = palette.accent.gamma_multiply(0.62);
     egui::Frame::none()
         .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
@@ -1176,21 +1187,21 @@ fn render_segmented_tab_bar(
                 let task_button = egui::Button::new(
                     egui::RichText::new(task_label)
                         .color(if task_selected {
-                            egui::Color32::WHITE
+                            palette.accent
                         } else {
                             palette.text
                         })
                         .strong(),
                 )
                 .fill(if task_selected {
-                    palette.accent
+                    selected_fill
                 } else {
                     egui::Color32::TRANSPARENT
                 })
                 .stroke(egui::Stroke::new(
                     1.0,
                     if task_selected {
-                        palette.accent
+                        selected_stroke
                     } else {
                         palette.border
                     },
@@ -1206,21 +1217,21 @@ fn render_segmented_tab_bar(
                 let history_button = egui::Button::new(
                     egui::RichText::new(history_label)
                         .color(if history_selected {
-                            egui::Color32::WHITE
+                            palette.accent
                         } else {
                             palette.text
                         })
                         .strong(),
                 )
                 .fill(if history_selected {
-                    palette.accent
+                    selected_fill
                 } else {
                     egui::Color32::TRANSPARENT
                 })
                 .stroke(egui::Stroke::new(
                     1.0,
                     if history_selected {
-                        palette.accent
+                        selected_stroke
                     } else {
                         palette.border
                     },
@@ -1242,6 +1253,11 @@ fn render_settings_tab_bar(
     palette: ThemePalette,
 ) -> bool {
     let mut changed = false;
+    let selected_fill =
+        palette
+            .accent
+            .gamma_multiply(if ui.visuals().dark_mode { 0.18 } else { 0.08 });
+    let selected_stroke = palette.accent.gamma_multiply(0.62);
     egui::Frame::none()
         .fill(palette.soft)
         .stroke(egui::Stroke::new(1.0, palette.border))
@@ -1255,21 +1271,21 @@ fn render_settings_tab_bar(
                     let button = egui::Button::new(
                         egui::RichText::new(tab.label())
                             .color(if is_selected {
-                                egui::Color32::WHITE
+                                palette.accent
                             } else {
                                 palette.text
                             })
                             .strong(),
                     )
                     .fill(if is_selected {
-                        palette.accent
+                        selected_fill
                     } else {
                         egui::Color32::TRANSPARENT
                     })
                     .stroke(egui::Stroke::new(
                         1.0,
                         if is_selected {
-                            palette.accent
+                            selected_stroke
                         } else {
                             palette.border
                         },
@@ -1312,20 +1328,20 @@ fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemeP
                             .strong(),
                     )
                     .fill(if is_selected {
-                        palette.accent
+                        palette.accent.gamma_multiply(0.86)
                     } else {
                         palette.row
                     })
                     .stroke(egui::Stroke::new(
                         1.0,
                         if is_selected {
-                            palette.accent
+                            palette.accent.gamma_multiply(0.86)
                         } else {
                             egui::Color32::TRANSPARENT
                         },
                     ))
                     .rounding(egui::Rounding::same(6.0))
-                    .min_size(egui::vec2(76.0, 32.0));
+                    .min_size(egui::vec2(70.0, 30.0));
                     if ui.add(button).clicked() && !is_selected {
                         *selected = tab;
                         changed = true;
@@ -2580,21 +2596,21 @@ impl AppState {
         if ui
             .add_enabled(
                 !has_uploading,
-                primary_button(upload_text, palette).min_size(egui::vec2(118.0, 36.0)),
+                primary_button(upload_text, palette).min_size(egui::vec2(112.0, 34.0)),
             )
             .clicked()
         {
             self.trigger_upload();
         }
         if ui
-            .add(secondary_button("活动", palette).min_size(egui::vec2(72.0, 36.0)))
+            .add(secondary_button("活动", palette).min_size(egui::vec2(66.0, 34.0)))
             .clicked()
         {
             self.active_tab = AppTab::Activity;
             self.bottom_tab = BottomTab::Tasks;
         }
         if ui
-            .add(secondary_button("设置", palette).min_size(egui::vec2(72.0, 36.0)))
+            .add(secondary_button("设置", palette).min_size(egui::vec2(66.0, 34.0)))
             .clicked()
         {
             self.active_tab = AppTab::Settings;
@@ -2649,16 +2665,16 @@ impl AppState {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         render_window_controls(ui);
-                        ui.add_space(6.0);
+                        ui.add_space(4.0);
                         ui.label(
                             egui::RichText::new("剪贴板图片上传")
-                                .size(25.0)
+                                .size(23.0)
                                 .color(palette.text)
                                 .strong(),
                         );
                         ui.label(
                             egui::RichText::new("截图、上传、复制链接集中处理。")
-                                .size(13.0)
+                                .size(12.5)
                                 .color(palette.muted),
                         );
                     });
@@ -2668,55 +2684,55 @@ impl AppState {
                 });
             } else {
                 render_window_controls(ui);
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new("剪贴板图片上传")
-                        .size(25.0)
+                        .size(23.0)
                         .color(palette.text)
                         .strong(),
                 );
                 ui.label(
                     egui::RichText::new("截图、上传、复制链接集中处理。")
-                        .size(13.0)
+                        .size(12.5)
                         .color(palette.muted),
                 );
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     self.render_header_actions(ui, palette, has_uploading);
                 });
             }
 
-            ui.add_space(10.0);
+            ui.add_space(8.0);
 
             egui::Frame::none()
                 .fill(palette.soft)
                 .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
                 .rounding(egui::Rounding::same(8.0))
-                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                 .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         render_status_dot(ui, state_color);
                         ui.label(
                             egui::RichText::new(state_text.as_str())
-                                .size(12.5)
+                                .size(12.0)
                                 .color(palette.text)
                                 .strong(),
                         );
-                        ui.label(egui::RichText::new("·").size(12.5).color(palette.muted));
+                        ui.label(egui::RichText::new("·").size(12.0).color(palette.muted));
                         render_status_dot(ui, watch_color);
                         ui.label(
                             egui::RichText::new(watch_text)
-                                .size(12.5)
+                                .size(12.0)
                                 .color(palette.muted),
                         );
-                        ui.label(egui::RichText::new("·").size(12.5).color(palette.muted));
+                        ui.label(egui::RichText::new("·").size(12.0).color(palette.muted));
                         render_status_dot(ui, config_color);
                         ui.label(
                             egui::RichText::new(config_text)
-                                .size(12.5)
+                                .size(12.0)
                                 .color(palette.muted),
                         );
-                        ui.add_space(8.0);
+                        ui.add_space(6.0);
                         render_metric_tile(ui, &task_count, "任务", palette.accent, palette);
                         render_metric_tile(ui, &history_count, "历史", apple_green(), palette);
                         render_metric_tile(ui, watch_metric, "监听", apple_orange(), palette);
@@ -2786,7 +2802,7 @@ impl AppState {
         let render_upload_status = |ui: &mut egui::Ui, this: &mut Self| {
             surface_frame(palette).show(ui, |ui| {
                 render_panel_header(ui, "上传状态", "当前任务、结果和最近链接。", palette);
-                ui.add_space(8.0);
+                ui.add_space(6.0);
 
                 soft_card_frame(palette).show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -2794,7 +2810,7 @@ impl AppState {
                         ui.vertical(|ui| {
                             ui.label(
                                 egui::RichText::new(state_title.as_str())
-                                    .size(16.0)
+                                    .size(15.0)
                                     .color(palette.text)
                                     .strong(),
                             );
@@ -2807,7 +2823,7 @@ impl AppState {
                     });
                 });
 
-                ui.add_space(8.0);
+                ui.add_space(6.0);
 
                 ui.horizontal_wrapped(|ui| {
                     render_metric_tile(ui, &task_count, "任务", palette.accent, palette);
@@ -2825,19 +2841,19 @@ impl AppState {
                     );
                 });
 
-                ui.add_space(8.0);
+                ui.add_space(6.0);
 
                 egui::Frame::none()
                     .fill(palette.row)
                     .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
                     .rounding(egui::Rounding::same(8.0))
-                    .inner_margin(egui::Margin::same(12.0))
+                    .inner_margin(egui::Margin::same(10.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
                                 ui.label(
                                     egui::RichText::new("最近链接")
-                                        .size(15.0)
+                                        .size(14.0)
                                         .color(palette.text)
                                         .strong(),
                                 );
@@ -2886,9 +2902,9 @@ impl AppState {
         let render_workflow = |ui: &mut egui::Ui, this: &mut Self| {
             surface_frame(palette).show(ui, |ui| {
                 render_panel_header(ui, "工作方式", "桌面行为和快捷入口。", palette);
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 soft_card_frame(palette).show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 9.0;
+                    ui.spacing_mut().item_spacing.y = 8.0;
                     render_plain_summary_row(
                         ui,
                         "当前主题",
@@ -2948,17 +2964,17 @@ impl AppState {
                         palette,
                     );
                 });
-                ui.add_space(6.0);
+                ui.add_space(5.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui
-                        .add(secondary_button("活动记录", palette).min_size(egui::vec2(92.0, 34.0)))
+                        .add(secondary_button("活动记录", palette).min_size(egui::vec2(88.0, 32.0)))
                         .clicked()
                     {
                         this.active_tab = AppTab::Activity;
                         this.bottom_tab = BottomTab::Tasks;
                     }
                     if ui
-                        .add(secondary_button("打开设置", palette).min_size(egui::vec2(92.0, 34.0)))
+                        .add(secondary_button("打开设置", palette).min_size(egui::vec2(88.0, 32.0)))
                         .clicked()
                     {
                         this.active_tab = AppTab::Settings;
