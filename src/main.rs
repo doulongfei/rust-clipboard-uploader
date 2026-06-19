@@ -672,7 +672,7 @@ fn theme_palette(theme: egui::Theme, accent: AccentColor) -> ThemePalette {
             card: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 248),
             soft: egui::Color32::from_rgb(250, 251, 253),
             row: egui::Color32::from_rgb(246, 248, 251),
-            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 14),
+            border: egui::Color32::from_rgba_unmultiplied(15, 23, 42, 10),
             text: egui::Color32::from_rgb(24, 29, 39),
             muted: egui::Color32::from_rgb(100, 109, 124),
             shadow: egui::Color32::from_black_alpha(8),
@@ -685,7 +685,7 @@ fn theme_palette(theme: egui::Theme, accent: AccentColor) -> ThemePalette {
             card: egui::Color32::from_rgba_unmultiplied(17, 21, 28, 246),
             soft: egui::Color32::from_rgb(22, 27, 35),
             row: egui::Color32::from_rgb(27, 33, 42),
-            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 12),
+            border: egui::Color32::from_rgba_unmultiplied(255, 255, 255, 8),
             text: egui::Color32::from_rgb(235, 239, 245),
             muted: egui::Color32::from_rgb(132, 142, 158),
             shadow: egui::Color32::from_black_alpha(34),
@@ -712,9 +712,9 @@ fn panel_card_frame(palette: ThemePalette) -> egui::Frame {
 fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.soft)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+        .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(12.0))
+        .inner_margin(egui::Margin::same(11.0))
 }
 
 fn surface_frame(palette: ThemePalette) -> egui::Frame {
@@ -722,7 +722,7 @@ fn surface_frame(palette: ThemePalette) -> egui::Frame {
         .fill(palette.card)
         .stroke(egui::Stroke::new(1.0, palette.border))
         .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(18.0, 16.0))
+        .inner_margin(egui::Margin::symmetric(14.0, 12.0))
 }
 
 fn setting_row_frame(palette: ThemePalette) -> egui::Frame {
@@ -759,51 +759,52 @@ fn render_metric_tile(
     tint: egui::Color32,
     palette: ThemePalette,
 ) {
-    soft_card_frame(palette)
-        .fill(palette.soft)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+    egui::Frame::none()
+        .fill(palette.row)
+        .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+        .rounding(egui::Rounding::same(8.0))
+        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let (bar_rect, _) =
-                    ui.allocate_exact_size(egui::vec2(3.0, 42.0), egui::Sense::hover());
-                ui.painter()
-                    .rect_filled(bar_rect, egui::Rounding::same(2.0), tint);
+                ui.label(egui::RichText::new(label).size(12.0).color(palette.muted));
                 ui.add_space(4.0);
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(value)
-                            .size(21.0)
-                            .color(palette.text)
-                            .strong(),
-                    );
-                    ui.label(egui::RichText::new(label).size(12.0).color(palette.muted));
-                });
+                ui.label(
+                    egui::RichText::new(value)
+                        .size(14.5)
+                        .color(palette.text)
+                        .strong(),
+                );
+                let (dot_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(6.0, 6.0), egui::Sense::hover());
+                ui.painter()
+                    .circle_filled(dot_rect.center(), 3.0, tint.gamma_multiply(0.9));
             });
         });
 }
 
-fn render_summary_row(
+fn render_plain_summary_row(
     ui: &mut egui::Ui,
     label: &str,
     value: &str,
-    tint: egui::Color32,
+    value_color: egui::Color32,
     palette: ThemePalette,
 ) {
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(label).size(13.5).color(palette.muted));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            render_pill(
-                ui,
-                value,
-                if ui.visuals().dark_mode {
-                    tint.gamma_multiply(0.26)
-                } else {
-                    tint.gamma_multiply(0.12)
-                },
-                tint.gamma_multiply(0.95),
+            ui.label(
+                egui::RichText::new(value)
+                    .size(13.5)
+                    .color(value_color)
+                    .strong(),
             );
         });
     });
+}
+
+fn render_status_dot(ui: &mut egui::Ui, color: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 7.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
 fn render_window_controls(ui: &mut egui::Ui) {
@@ -832,13 +833,13 @@ fn render_window_controls(ui: &mut egui::Ui) {
 fn render_panel_header(ui: &mut egui::Ui, title: &str, subtitle: &str, palette: ThemePalette) {
     ui.label(
         egui::RichText::new(title)
-            .size(20.0)
+            .size(18.5)
             .color(palette.text)
             .strong(),
     );
     ui.label(
         egui::RichText::new(subtitle)
-            .size(13.0)
+            .size(12.5)
             .color(palette.muted),
     );
 }
@@ -1288,12 +1289,12 @@ fn render_settings_tab_bar(
 fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemePalette) -> bool {
     let mut changed = false;
     egui::Frame::none()
-        .fill(palette.soft)
-        .stroke(egui::Stroke::new(1.0, palette.border))
-        .rounding(egui::Rounding::same(8.0))
-        .inner_margin(egui::Margin::same(3.0))
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+        .inner_margin(egui::Margin::symmetric(0.0, 1.0))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
                 for tab in [
                     AppTab::Overview,
                     AppTab::Upload,
@@ -1306,25 +1307,25 @@ fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemeP
                             .color(if is_selected {
                                 egui::Color32::WHITE
                             } else {
-                                palette.text
+                                palette.muted
                             })
                             .strong(),
                     )
                     .fill(if is_selected {
                         palette.accent
                     } else {
-                        egui::Color32::TRANSPARENT
+                        palette.row
                     })
                     .stroke(egui::Stroke::new(
                         1.0,
                         if is_selected {
                             palette.accent
                         } else {
-                            palette.border
+                            egui::Color32::TRANSPARENT
                         },
                     ))
                     .rounding(egui::Rounding::same(6.0))
-                    .min_size(egui::vec2(92.0, 34.0));
+                    .min_size(egui::vec2(76.0, 32.0));
                     if ui.add(button).clicked() && !is_selected {
                         *selected = tab;
                         changed = true;
@@ -2308,59 +2309,44 @@ impl AppState {
             }
         });
 
-        let (banner_fill, banner_stroke, banner_icon, banner_title, banner_detail) =
-            if let Some((is_err, msg)) = &self.status {
-                if *is_err {
-                    (
-                        apple_red().gamma_multiply(0.10),
-                        apple_red().gamma_multiply(0.35),
-                        "失败",
-                        msg.clone(),
-                        "请检查网络、响应解析规则或上传地址。",
-                    )
-                } else {
-                    (
-                        apple_green().gamma_multiply(0.10),
-                        apple_green().gamma_multiply(0.35),
-                        "完成",
-                        msg.clone(),
-                        "状态提示会在几秒后自动清除。",
-                    )
-                }
-            } else if has_uploading {
+        let (state_title, state_detail, state_color) = if let Some((is_err, msg)) = &self.status {
+            if *is_err {
                 (
-                    palette.accent.gamma_multiply(0.12),
-                    palette.accent.gamma_multiply(0.35),
-                    "处理中",
-                    "正在上传新的剪贴板图片".to_string(),
-                    "文件已读取，等待远端完成响应。",
+                    msg.clone(),
+                    "请检查网络、响应解析规则或上传地址。",
+                    apple_red(),
                 )
             } else {
-                (
-                    palette.row,
-                    palette.border,
-                    "待命",
-                    "应用已就绪".to_string(),
-                    "截图后可以直接上传，也可以交给自动监听。",
-                )
-            };
+                (msg.clone(), "状态提示会在几秒后自动清除。", apple_green())
+            }
+        } else if has_uploading {
+            (
+                "正在上传新的剪贴板图片".to_string(),
+                "文件已读取，等待远端完成响应。",
+                palette.accent,
+            )
+        } else {
+            (
+                "应用已就绪".to_string(),
+                "截图后可以直接上传，也可以交给自动监听。",
+                apple_green(),
+            )
+        };
+        let success_count_text = success_count.to_string();
 
-        egui::Frame::none()
-            .fill(banner_fill)
-            .stroke(egui::Stroke::new(1.0, banner_stroke))
-            .rounding(egui::Rounding::same(8.0))
-            .inner_margin(egui::Margin::same(14.0))
-            .show(ui, |ui| {
+        let render_upload_state = |ui: &mut egui::Ui, this: &mut Self| {
+            soft_card_frame(palette).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    render_pill(ui, banner_icon, banner_fill, banner_stroke);
+                    render_status_dot(ui, state_color);
                     ui.vertical(|ui| {
                         ui.label(
-                            egui::RichText::new(banner_title)
+                            egui::RichText::new(state_title.as_str())
+                                .size(16.0)
                                 .color(palette.text)
                                 .strong(),
                         );
                         ui.label(
-                            egui::RichText::new(banner_detail)
+                            egui::RichText::new(state_detail)
                                 .size(12.5)
                                 .color(palette.muted),
                         );
@@ -2368,85 +2354,100 @@ impl AppState {
                 });
             });
 
-        match self.last_url.clone() {
-            Some(url) => {
-                soft_card_frame(palette).show(ui, |ui| {
-                    render_panel_header(ui, "最近链接", "最近一次成功上传的地址。", palette);
-                    ui.add_space(6.0);
+            ui.add_space(8.0);
+
+            soft_card_frame(palette).show(ui, |ui| {
+                render_panel_header(ui, "最近链接", "最近一次成功上传的地址。", palette);
+                ui.add_space(6.0);
+                if let Some(url) = this.last_url.clone() {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.hyperlink_to("打开", &url);
                             if ui.add(secondary_button("复制", palette)).clicked()
                                 && copy_text_to_clipboard(&url)
                             {
-                                self.set_status_auto_clear(false, "已复制到剪贴板".to_string());
+                                this.set_status_auto_clear(false, "已复制到剪贴板".to_string());
                             }
                         });
                     });
-                    ui.label(egui::RichText::new(url).monospace().color(palette.accent));
-                });
-            }
-            None => {
-                soft_card_frame(palette).show(ui, |ui| {
-                    render_panel_header(ui, "最近链接", "最近一次成功上传的地址。", palette);
-                    ui.add_space(6.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(url).monospace().color(palette.accent),
+                        )
+                        .wrap(),
+                    );
+                } else {
                     ui.label(
                         egui::RichText::new("还没有成功上传的链接，下一次上传成功后会显示在这里。")
                             .size(12.5)
                             .color(palette.muted),
                     );
-                });
-            }
-        }
+                }
+            });
+        };
 
-        soft_card_frame(palette).show(ui, |ui| {
-            render_panel_header(ui, "偏好状态", "当前桌面行为的摘要。", palette);
-            ui.add_space(6.0);
-            render_summary_row(
-                ui,
-                "自动复制",
-                if auto_copy { "开启" } else { "关闭" },
-                if auto_copy {
-                    apple_green()
-                } else {
-                    palette.muted
-                },
-                palette,
-            );
-            render_summary_row(
-                ui,
-                "系统通知",
-                if notify_on_success {
-                    "开启"
-                } else {
-                    "关闭"
-                },
-                if notify_on_success {
-                    palette.accent
-                } else {
-                    palette.muted
-                },
-                palette,
-            );
-            render_summary_row(
-                ui,
-                "关闭窗口",
-                if close_to_tray {
-                    "保持后台运行"
-                } else {
-                    "直接退出"
-                },
-                apple_orange(),
-                palette,
-            );
-            render_summary_row(
-                ui,
-                "已完成任务",
-                &success_count.to_string(),
-                apple_green(),
-                palette,
-            );
-        });
+        let render_preference_state = |ui: &mut egui::Ui| {
+            soft_card_frame(palette).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 9.0;
+                render_panel_header(ui, "偏好状态", "当前桌面行为的摘要。", palette);
+                ui.add_space(4.0);
+                render_plain_summary_row(
+                    ui,
+                    "自动复制",
+                    if auto_copy { "开启" } else { "关闭" },
+                    if auto_copy {
+                        apple_green()
+                    } else {
+                        palette.muted
+                    },
+                    palette,
+                );
+                render_plain_summary_row(
+                    ui,
+                    "系统通知",
+                    if notify_on_success {
+                        "开启"
+                    } else {
+                        "关闭"
+                    },
+                    if notify_on_success {
+                        palette.accent
+                    } else {
+                        palette.muted
+                    },
+                    palette,
+                );
+                render_plain_summary_row(
+                    ui,
+                    "关闭窗口",
+                    if close_to_tray {
+                        "保持后台运行"
+                    } else {
+                        "直接退出"
+                    },
+                    apple_orange(),
+                    palette,
+                );
+                render_plain_summary_row(
+                    ui,
+                    "已完成任务",
+                    &success_count_text,
+                    apple_green(),
+                    palette,
+                );
+            });
+        };
+
+        if ui.available_width() > 760.0 {
+            ui.columns(2, |columns| {
+                render_upload_state(&mut columns[0], self);
+                render_preference_state(&mut columns[1]);
+            });
+        } else {
+            render_upload_state(ui, self);
+            ui.add_space(8.0);
+            render_preference_state(ui);
+        }
     }
 
     fn render_appearance_panel(
@@ -2565,6 +2566,165 @@ impl AppState {
         });
     }
 
+    fn render_header_actions(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: ThemePalette,
+        has_uploading: bool,
+    ) {
+        let upload_text = if has_uploading {
+            "上传中..."
+        } else {
+            "上传剪贴板"
+        };
+        if ui
+            .add_enabled(
+                !has_uploading,
+                primary_button(upload_text, palette).min_size(egui::vec2(118.0, 36.0)),
+            )
+            .clicked()
+        {
+            self.trigger_upload();
+        }
+        if ui
+            .add(secondary_button("活动", palette).min_size(egui::vec2(72.0, 36.0)))
+            .clicked()
+        {
+            self.active_tab = AppTab::Activity;
+            self.bottom_tab = BottomTab::Tasks;
+        }
+        if ui
+            .add(secondary_button("设置", palette).min_size(egui::vec2(72.0, 36.0)))
+            .clicked()
+        {
+            self.active_tab = AppTab::Settings;
+        }
+    }
+
+    fn render_command_header(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: ThemePalette,
+        has_uploading: bool,
+        uploading_count: usize,
+        watch_enabled: bool,
+    ) {
+        let state_text = if has_uploading {
+            format!("{} 个任务处理中", uploading_count)
+        } else {
+            "准备就绪".to_string()
+        };
+        let state_color = if has_uploading {
+            palette.accent
+        } else {
+            apple_green()
+        };
+        let watch_text = if watch_enabled {
+            "自动监听开启"
+        } else {
+            "自动监听关闭"
+        };
+        let watch_color = if watch_enabled {
+            apple_green()
+        } else {
+            palette.muted
+        };
+        let config_text = if self.config_dirty {
+            "配置待保存"
+        } else {
+            "配置已保存"
+        };
+        let config_color = if self.config_dirty {
+            apple_orange()
+        } else {
+            palette.muted
+        };
+        let task_count = self.tasks.len().to_string();
+        let history_count = self.history.len().to_string();
+        let watch_metric = if watch_enabled { "ON" } else { "OFF" };
+
+        surface_frame(palette).show(ui, |ui| {
+            let wide = ui.available_width() > 720.0;
+            if wide {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        render_window_controls(ui);
+                        ui.add_space(6.0);
+                        ui.label(
+                            egui::RichText::new("剪贴板图片上传")
+                                .size(25.0)
+                                .color(palette.text)
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new("截图、上传、复制链接集中处理。")
+                                .size(13.0)
+                                .color(palette.muted),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.render_header_actions(ui, palette, has_uploading);
+                    });
+                });
+            } else {
+                render_window_controls(ui);
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new("剪贴板图片上传")
+                        .size(25.0)
+                        .color(palette.text)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new("截图、上传、复制链接集中处理。")
+                        .size(13.0)
+                        .color(palette.muted),
+                );
+                ui.add_space(10.0);
+                ui.horizontal_wrapped(|ui| {
+                    self.render_header_actions(ui, palette, has_uploading);
+                });
+            }
+
+            ui.add_space(10.0);
+
+            egui::Frame::none()
+                .fill(palette.soft)
+                .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+                .rounding(egui::Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        render_status_dot(ui, state_color);
+                        ui.label(
+                            egui::RichText::new(state_text.as_str())
+                                .size(12.5)
+                                .color(palette.text)
+                                .strong(),
+                        );
+                        ui.label(egui::RichText::new("·").size(12.5).color(palette.muted));
+                        render_status_dot(ui, watch_color);
+                        ui.label(
+                            egui::RichText::new(watch_text)
+                                .size(12.5)
+                                .color(palette.muted),
+                        );
+                        ui.label(egui::RichText::new("·").size(12.5).color(palette.muted));
+                        render_status_dot(ui, config_color);
+                        ui.label(
+                            egui::RichText::new(config_text)
+                                .size(12.5)
+                                .color(palette.muted),
+                        );
+                        ui.add_space(8.0);
+                        render_metric_tile(ui, &task_count, "任务", palette.accent, palette);
+                        render_metric_tile(ui, &history_count, "历史", apple_green(), palette);
+                        render_metric_tile(ui, watch_metric, "监听", apple_orange(), palette);
+                    });
+                });
+        });
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_overview_page(
         &mut self,
@@ -2580,17 +2740,82 @@ impl AppState {
         notify_on_success: bool,
     ) {
         let wide = ui.available_width() > 760.0;
+        let active_count = self
+            .tasks
+            .iter()
+            .filter(|task| task_is_active(&task.status))
+            .count();
+        let system_theme_label = match ctx.system_theme() {
+            Some(egui::Theme::Dark) => "深色",
+            Some(egui::Theme::Light) => "浅色",
+            None => "未知",
+        };
+        let (state_title, state_detail, state_color) = if active_count > 0 {
+            (
+                format!("{} 个任务处理中", active_count),
+                "上传线程正在等待远端响应。".to_string(),
+                palette.accent,
+            )
+        } else if let Some((is_error, message)) = self.status.clone() {
+            (
+                message,
+                if is_error {
+                    "请检查网络、上传接口或响应解析规则。".to_string()
+                } else {
+                    "最近一次操作已完成。".to_string()
+                },
+                if is_error { apple_red() } else { apple_green() },
+            )
+        } else if failed_count > 0 {
+            (
+                "有失败任务待处理".to_string(),
+                "打开活动记录可以重试或清理失败任务。".to_string(),
+                apple_red(),
+            )
+        } else {
+            (
+                "应用已就绪".to_string(),
+                "截图后可以直接上传，也可以交给自动监听。".to_string(),
+                apple_green(),
+            )
+        };
+        let task_count = self.tasks.len().to_string();
+        let success_count_text = success_count.to_string();
+        let failed_count_text = failed_count.to_string();
 
-        let render_status = |ui: &mut egui::Ui, this: &mut Self| {
+        let render_upload_status = |ui: &mut egui::Ui, this: &mut Self| {
             surface_frame(palette).show(ui, |ui| {
-                render_panel_header(ui, "运行摘要", "当前状态和最近输出。", palette);
-                ui.add_space(10.0);
+                render_panel_header(ui, "上传状态", "当前任务、结果和最近链接。", palette);
+                ui.add_space(8.0);
 
                 soft_card_frame(palette).show(ui, |ui| {
-                    render_summary_row(
+                    ui.horizontal(|ui| {
+                        render_status_dot(ui, state_color);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(state_title.as_str())
+                                    .size(16.0)
+                                    .color(palette.text)
+                                    .strong(),
+                            );
+                            ui.label(
+                                egui::RichText::new(state_detail.as_str())
+                                    .size(12.5)
+                                    .color(palette.muted),
+                            );
+                        });
+                    });
+                });
+
+                ui.add_space(8.0);
+
+                ui.horizontal_wrapped(|ui| {
+                    render_metric_tile(ui, &task_count, "任务", palette.accent, palette);
+                    render_metric_tile(ui, &success_count_text, "成功", apple_green(), palette);
+                    render_metric_tile(
                         ui,
-                        "失败任务",
-                        &failed_count.to_string(),
+                        &failed_count_text,
+                        "失败",
                         if failed_count > 0 {
                             apple_red()
                         } else {
@@ -2598,74 +2823,94 @@ impl AppState {
                         },
                         palette,
                     );
-                    render_summary_row(
-                        ui,
-                        "已完成任务",
-                        &success_count.to_string(),
-                        apple_green(),
-                        palette,
-                    );
-                    render_summary_row(
-                        ui,
-                        "系统主题",
-                        match ctx.system_theme() {
-                            Some(egui::Theme::Dark) => "深色",
-                            Some(egui::Theme::Light) => "浅色",
-                            None => "未知",
-                        },
-                        apple_orange(),
-                        palette,
-                    );
                 });
 
                 ui.add_space(8.0);
 
-                soft_card_frame(palette).show(ui, |ui| {
-                    render_panel_header(ui, "最近链接", "最近一次成功上传的地址。", palette);
-                    ui.add_space(6.0);
-                    if let Some(url) = this.last_url.clone() {
+                egui::Frame::none()
+                    .fill(palette.row)
+                    .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+                    .rounding(egui::Rounding::same(8.0))
+                    .inner_margin(egui::Margin::same(12.0))
+                    .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.hyperlink_to("打开", &url);
-                                    if ui.add(secondary_button("复制", palette)).clicked()
-                                        && copy_text_to_clipboard(&url)
-                                    {
-                                        this.set_status_auto_clear(
-                                            false,
-                                            "已复制到剪贴板".to_string(),
-                                        );
-                                    }
-                                },
-                            );
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    egui::RichText::new("最近链接")
+                                        .size(15.0)
+                                        .color(palette.text)
+                                        .strong(),
+                                );
+                                ui.label(
+                                    egui::RichText::new("最近一次成功上传的地址。")
+                                        .size(12.5)
+                                        .color(palette.muted),
+                                );
+                            });
+                            if let Some(url) = this.last_url.clone() {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.hyperlink_to("打开", &url);
+                                        if ui.add(secondary_button("复制", palette)).clicked()
+                                            && copy_text_to_clipboard(&url)
+                                        {
+                                            this.set_status_auto_clear(
+                                                false,
+                                                "已复制到剪贴板".to_string(),
+                                            );
+                                        }
+                                    },
+                                );
+                            }
                         });
-                        ui.label(egui::RichText::new(url).monospace().color(palette.accent));
-                    } else {
-                        ui.label(
-                            egui::RichText::new("还没有成功上传的链接。")
-                                .size(12.5)
-                                .color(palette.muted),
-                        );
-                    }
-                });
+                        ui.add_space(6.0);
+                        if let Some(url) = this.last_url.clone() {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(url).monospace().color(palette.accent),
+                                )
+                                .wrap(),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new("下一次上传成功后会显示在这里。")
+                                    .size(12.5)
+                                    .color(palette.muted),
+                            );
+                        }
+                    });
             });
         };
 
-        let render_preferences = |ui: &mut egui::Ui, this: &mut Self| {
+        let render_workflow = |ui: &mut egui::Ui, this: &mut Self| {
             surface_frame(palette).show(ui, |ui| {
-                render_panel_header(ui, "桌面行为", "常用偏好和快捷入口。", palette);
-                ui.add_space(10.0);
+                render_panel_header(ui, "工作方式", "桌面行为和快捷入口。", palette);
+                ui.add_space(8.0);
                 soft_card_frame(palette).show(ui, |ui| {
-                    render_summary_row(ui, "当前主题", theme_mode.label(), palette.accent, palette);
-                    render_summary_row(
+                    ui.spacing_mut().item_spacing.y = 9.0;
+                    render_plain_summary_row(
+                        ui,
+                        "当前主题",
+                        theme_mode.label(),
+                        palette.text,
+                        palette,
+                    );
+                    render_plain_summary_row(
+                        ui,
+                        "系统外观",
+                        system_theme_label,
+                        palette.muted,
+                        palette,
+                    );
+                    render_plain_summary_row(
                         ui,
                         "主题色",
                         accent_choice.label(),
                         palette.accent,
                         palette,
                     );
-                    render_summary_row(
+                    render_plain_summary_row(
                         ui,
                         "自动复制",
                         if auto_copy { "开启" } else { "关闭" },
@@ -2676,7 +2921,7 @@ impl AppState {
                         },
                         palette,
                     );
-                    render_summary_row(
+                    render_plain_summary_row(
                         ui,
                         "系统通知",
                         if notify_on_success {
@@ -2691,7 +2936,7 @@ impl AppState {
                         },
                         palette,
                     );
-                    render_summary_row(
+                    render_plain_summary_row(
                         ui,
                         "关闭窗口",
                         if close_to_tray {
@@ -2703,21 +2948,17 @@ impl AppState {
                         palette,
                     );
                 });
-                ui.add_space(10.0);
+                ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui
-                        .add(
-                            secondary_button("活动记录", palette).min_size(egui::vec2(104.0, 38.0)),
-                        )
+                        .add(secondary_button("活动记录", palette).min_size(egui::vec2(92.0, 34.0)))
                         .clicked()
                     {
                         this.active_tab = AppTab::Activity;
                         this.bottom_tab = BottomTab::Tasks;
                     }
                     if ui
-                        .add(
-                            secondary_button("打开设置", palette).min_size(egui::vec2(104.0, 38.0)),
-                        )
+                        .add(secondary_button("打开设置", palette).min_size(egui::vec2(92.0, 34.0)))
                         .clicked()
                     {
                         this.active_tab = AppTab::Settings;
@@ -2729,12 +2970,12 @@ impl AppState {
 
         if wide {
             ui.columns(2, |columns| {
-                render_status(&mut columns[0], self);
-                render_preferences(&mut columns[1], self);
+                render_upload_status(&mut columns[0], self);
+                render_workflow(&mut columns[1], self);
             });
         } else {
-            render_status(ui, self);
-            render_preferences(ui, self);
+            render_upload_status(ui, self);
+            render_workflow(ui, self);
         }
     }
 
@@ -3368,338 +3609,21 @@ impl eframe::App for AppState {
             .frame(
                 egui::Frame::none()
                     .fill(palette.bg)
-                    .inner_margin(egui::Margin::same(18.0)),
+                    .inner_margin(egui::Margin::same(14.0)),
             )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("page_scroll")
                     .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(18.0, 18.0);
+                        ui.spacing_mut().item_spacing = egui::vec2(14.0, 14.0);
 
-                        surface_frame(palette).show(ui, |ui| {
-                            let hero_wide = ui.available_width() > 680.0;
-                            if hero_wide {
-                                ui.columns(2, |columns| {
-                                    columns[0].vertical(|ui| {
-                                        render_window_controls(ui);
-                                        ui.add_space(10.0);
-                                        ui.label(
-                                            egui::RichText::new("剪贴板图片上传")
-                                                .size(29.0)
-                                                .color(palette.text)
-                                                .strong(),
-                                        );
-                                        ui.label(
-                                            egui::RichText::new(
-                                                "截图、上传、复制链接集中在一个桌面工作台。",
-                                            )
-                                            .size(14.5)
-                                            .color(palette.muted),
-                                        );
-                                        ui.add_space(8.0);
-                                        let upload_badge_text = if has_uploading {
-                                            format!("{} 个任务处理中", uploading_count)
-                                        } else {
-                                            "准备就绪".to_string()
-                                        };
-                                        ui.horizontal_wrapped(|ui| {
-                                            render_pill(
-                                                ui,
-                                                &upload_badge_text,
-                                                if has_uploading {
-                                                    accent_color_soft(
-                                                        accent_choice,
-                                                        ui.visuals().dark_mode,
-                                                    )
-                                                } else {
-                                                    apple_green().gamma_multiply(
-                                                        if ui.visuals().dark_mode {
-                                                            0.25
-                                                        } else {
-                                                            0.12
-                                                        },
-                                                    )
-                                                },
-                                                if has_uploading {
-                                                    palette.accent
-                                                } else {
-                                                    apple_green()
-                                                },
-                                            );
-                                            render_pill(
-                                                ui,
-                                                if watch_enabled {
-                                                    "自动监听开启"
-                                                } else {
-                                                    "自动监听关闭"
-                                                },
-                                                if watch_enabled {
-                                                    apple_green().gamma_multiply(
-                                                        if ui.visuals().dark_mode {
-                                                            0.25
-                                                        } else {
-                                                            0.12
-                                                        },
-                                                    )
-                                                } else {
-                                                    egui::Color32::from_rgba_unmultiplied(
-                                                        111,
-                                                        118,
-                                                        132,
-                                                        if ui.visuals().dark_mode {
-                                                            46
-                                                        } else {
-                                                            24
-                                                        },
-                                                    )
-                                                },
-                                                if watch_enabled {
-                                                    apple_green()
-                                                } else {
-                                                    palette.muted
-                                                },
-                                            );
-                                            render_pill(
-                                                ui,
-                                                if self.config_dirty {
-                                                    "配置待保存"
-                                                } else {
-                                                    "配置已保存"
-                                                },
-                                                if self.config_dirty {
-                                                    apple_orange().gamma_multiply(
-                                                        if ui.visuals().dark_mode {
-                                                            0.25
-                                                        } else {
-                                                            0.12
-                                                        },
-                                                    )
-                                                } else {
-                                                    apple_green().gamma_multiply(
-                                                        if ui.visuals().dark_mode {
-                                                            0.20
-                                                        } else {
-                                                            0.10
-                                                        },
-                                                    )
-                                                },
-                                                if self.config_dirty {
-                                                    apple_orange()
-                                                } else {
-                                                    apple_green()
-                                                },
-                                            );
-                                        });
-                                        ui.add_space(12.0);
-                                        ui.horizontal_wrapped(|ui| {
-                                            let upload_text = if has_uploading {
-                                                "上传中..."
-                                            } else {
-                                                "上传剪贴板"
-                                            };
-                                            if ui
-                                                .add_enabled(
-                                                    !has_uploading,
-                                                    primary_button(upload_text, palette)
-                                                        .min_size(egui::vec2(124.0, 38.0)),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.trigger_upload();
-                                            }
-                                            if ui
-                                                .add(
-                                                    secondary_button("活动记录", palette)
-                                                        .min_size(egui::vec2(100.0, 38.0)),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.active_tab = AppTab::Activity;
-                                                self.bottom_tab = BottomTab::Tasks;
-                                            }
-                                            if ui
-                                                .add(
-                                                    secondary_button("设置", palette)
-                                                        .min_size(egui::vec2(76.0, 38.0)),
-                                                )
-                                                .clicked()
-                                            {
-                                                self.active_tab = AppTab::Settings;
-                                            }
-                                        });
-                                    });
-                                    columns[1].vertical(|ui| {
-                                        render_panel_header(
-                                            ui,
-                                            "概览",
-                                            "应用当前运行状态。",
-                                            palette,
-                                        );
-                                        ui.add_space(4.0);
-                                        ui.columns(3, |stats| {
-                                            render_metric_tile(
-                                                &mut stats[0],
-                                                &self.tasks.len().to_string(),
-                                                "任务",
-                                                palette.accent,
-                                                palette,
-                                            );
-                                            render_metric_tile(
-                                                &mut stats[1],
-                                                &self.history.len().to_string(),
-                                                "历史",
-                                                apple_green(),
-                                                palette,
-                                            );
-                                            render_metric_tile(
-                                                &mut stats[2],
-                                                if watch_enabled { "ON" } else { "OFF" },
-                                                "监听",
-                                                apple_orange(),
-                                                palette,
-                                            );
-                                        });
-                                    });
-                                });
-                            } else {
-                                ui.vertical(|ui| {
-                                    render_window_controls(ui);
-                                    ui.add_space(10.0);
-                                    ui.label(
-                                        egui::RichText::new("剪贴板图片上传")
-                                            .size(29.0)
-                                            .color(palette.text)
-                                            .strong(),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(
-                                            "截图、上传、复制链接集中在一个桌面工作台。",
-                                        )
-                                        .size(14.5)
-                                        .color(palette.muted),
-                                    );
-                                    ui.horizontal_wrapped(|ui| {
-                                        render_pill(
-                                            ui,
-                                            if has_uploading {
-                                                "正在处理任务"
-                                            } else {
-                                                "准备就绪"
-                                            },
-                                            if has_uploading {
-                                                accent_color_soft(
-                                                    accent_choice,
-                                                    ui.visuals().dark_mode,
-                                                )
-                                            } else {
-                                                apple_green().gamma_multiply(
-                                                    if ui.visuals().dark_mode {
-                                                        0.25
-                                                    } else {
-                                                        0.12
-                                                    },
-                                                )
-                                            },
-                                            if has_uploading {
-                                                palette.accent
-                                            } else {
-                                                apple_green()
-                                            },
-                                        );
-                                        render_pill(
-                                            ui,
-                                            if self.config_dirty {
-                                                "配置待保存"
-                                            } else {
-                                                "配置已保存"
-                                            },
-                                            if self.config_dirty {
-                                                apple_orange().gamma_multiply(
-                                                    if ui.visuals().dark_mode {
-                                                        0.25
-                                                    } else {
-                                                        0.12
-                                                    },
-                                                )
-                                            } else {
-                                                apple_green().gamma_multiply(
-                                                    if ui.visuals().dark_mode {
-                                                        0.20
-                                                    } else {
-                                                        0.10
-                                                    },
-                                                )
-                                            },
-                                            if self.config_dirty {
-                                                apple_orange()
-                                            } else {
-                                                apple_green()
-                                            },
-                                        );
-                                    });
-                                    ui.add_space(12.0);
-                                    ui.horizontal_wrapped(|ui| {
-                                        let upload_text = if has_uploading {
-                                            "上传中..."
-                                        } else {
-                                            "上传剪贴板"
-                                        };
-                                        if ui
-                                            .add_enabled(
-                                                !has_uploading,
-                                                primary_button(upload_text, palette)
-                                                    .min_size(egui::vec2(124.0, 38.0)),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.trigger_upload();
-                                        }
-                                        if ui
-                                            .add(
-                                                secondary_button("活动记录", palette)
-                                                    .min_size(egui::vec2(100.0, 38.0)),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.active_tab = AppTab::Activity;
-                                            self.bottom_tab = BottomTab::Tasks;
-                                        }
-                                        if ui
-                                            .add(
-                                                secondary_button("设置", palette)
-                                                    .min_size(egui::vec2(76.0, 38.0)),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.active_tab = AppTab::Settings;
-                                        }
-                                    });
-                                    ui.columns(3, |stats| {
-                                        render_metric_tile(
-                                            &mut stats[0],
-                                            &self.tasks.len().to_string(),
-                                            "任务",
-                                            palette.accent,
-                                            palette,
-                                        );
-                                        render_metric_tile(
-                                            &mut stats[1],
-                                            &self.history.len().to_string(),
-                                            "历史",
-                                            apple_green(),
-                                            palette,
-                                        );
-                                        render_metric_tile(
-                                            &mut stats[2],
-                                            if watch_enabled { "ON" } else { "OFF" },
-                                            "监听",
-                                            apple_orange(),
-                                            palette,
-                                        );
-                                    });
-                                });
-                            }
-                        });
+                        self.render_command_header(
+                            ui,
+                            palette,
+                            has_uploading,
+                            uploading_count,
+                            watch_enabled,
+                        );
 
                         let _ = render_page_tab_bar(ui, &mut self.active_tab, palette);
 
