@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+mod macos;
+
 use anyhow::Result;
 use arboard::Clipboard;
 use chrono::Local;
@@ -208,15 +211,12 @@ fn show_main_window(ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
     }
     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    #[cfg(target_os = "macos")]
+    macos::activate();
 }
 
 fn hide_main_window_to_background(ctx: &egui::Context) {
-    if cfg!(target_os = "macos") {
-        // macOS 上直接设为不可见会让 Dock 菜单出现“无可用窗口”。
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-    } else {
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 }
 
 // ── 配置文件路径 ──────────────────────────────────────────
@@ -698,7 +698,7 @@ fn theme_palette(theme: egui::Theme, accent: AccentColor) -> ThemePalette {
 fn panel_card_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.card)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+        .stroke(egui::Stroke::new(1.0_f32, palette.border))
         .rounding(egui::Rounding::same(8.0))
         .shadow(egui::Shadow {
             offset: egui::vec2(0.0, 6.0),
@@ -712,7 +712,7 @@ fn panel_card_frame(palette: ThemePalette) -> egui::Frame {
 fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.soft)
-        .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+        .stroke(egui::Stroke::new(0.0_f32, egui::Color32::TRANSPARENT))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::same(10.0))
 }
@@ -720,7 +720,7 @@ fn soft_card_frame(palette: ThemePalette) -> egui::Frame {
 fn surface_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.card)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+        .stroke(egui::Stroke::new(1.0_f32, palette.border))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
 }
@@ -728,7 +728,7 @@ fn surface_frame(palette: ThemePalette) -> egui::Frame {
 fn setting_row_frame(palette: ThemePalette) -> egui::Frame {
     egui::Frame::none()
         .fill(palette.row)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+        .stroke(egui::Stroke::new(1.0_f32, palette.border))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(12.0, 10.0))
 }
@@ -736,7 +736,7 @@ fn setting_row_frame(palette: ThemePalette) -> egui::Frame {
 fn pill_frame(fill: egui::Color32, stroke: egui::Color32) -> egui::Frame {
     egui::Frame::none()
         .fill(fill)
-        .stroke(egui::Stroke::new(1.0, stroke))
+        .stroke(egui::Stroke::new(1.0_f32, stroke))
         .rounding(egui::Rounding::same(999.0))
         .inner_margin(egui::Margin::symmetric(10.0, 6.0))
 }
@@ -761,7 +761,7 @@ fn render_metric_tile(
 ) {
     egui::Frame::none()
         .fill(palette.row)
-        .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+        .stroke(egui::Stroke::new(0.0_f32, egui::Color32::TRANSPARENT))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::symmetric(8.0, 5.0))
         .show(ui, |ui| {
@@ -865,7 +865,7 @@ fn render_empty_state(
             icon_rect,
             egui::Rounding::same(8.0),
             palette.row,
-            egui::Stroke::new(1.0, palette.border),
+            egui::Stroke::new(1.0_f32, palette.border),
         );
 
         let center = icon_rect.center();
@@ -876,39 +876,39 @@ fn render_empty_state(
                         egui::pos2(center.x, center.y + 12.0),
                         egui::pos2(center.x, center.y - 11.0),
                     ],
-                    egui::Stroke::new(2.0, palette.accent),
+                    egui::Stroke::new(2.0_f32, palette.accent),
                 );
                 painter.line_segment(
                     [
                         egui::pos2(center.x - 8.0, center.y - 3.0),
                         egui::pos2(center.x, center.y - 11.0),
                     ],
-                    egui::Stroke::new(2.0, palette.accent),
+                    egui::Stroke::new(2.0_f32, palette.accent),
                 );
                 painter.line_segment(
                     [
                         egui::pos2(center.x + 8.0, center.y - 3.0),
                         egui::pos2(center.x, center.y - 11.0),
                     ],
-                    egui::Stroke::new(2.0, palette.accent),
+                    egui::Stroke::new(2.0_f32, palette.accent),
                 );
                 painter.line_segment(
                     [
                         egui::pos2(center.x - 14.0, center.y + 13.0),
                         egui::pos2(center.x + 14.0, center.y + 13.0),
                     ],
-                    egui::Stroke::new(2.0, palette.muted),
+                    egui::Stroke::new(2.0_f32, palette.muted),
                 );
             }
             EmptyStateIcon::History => {
-                painter.circle_stroke(center, 14.0, egui::Stroke::new(2.0, palette.accent));
+                painter.circle_stroke(center, 14.0, egui::Stroke::new(2.0_f32, palette.accent));
                 painter.line_segment(
                     [center, egui::pos2(center.x, center.y - 8.0)],
-                    egui::Stroke::new(2.0, palette.accent),
+                    egui::Stroke::new(2.0_f32, palette.accent),
                 );
                 painter.line_segment(
                     [center, egui::pos2(center.x + 7.0, center.y + 4.0)],
-                    egui::Stroke::new(2.0, palette.accent),
+                    egui::Stroke::new(2.0_f32, palette.accent),
                 );
             }
         }
@@ -989,7 +989,7 @@ fn apple_toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
             egui::Color32::from_rgb(160, 167, 179)
         };
         let track_stroke = egui::Stroke::new(
-            1.0,
+            1.0_f32,
             if response.hovered() {
                 if ui.visuals().dark_mode {
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 48)
@@ -1011,7 +1011,7 @@ fn apple_toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
             knob_center,
             knob_radius,
             egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 if ui.visuals().dark_mode {
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 28)
                 } else {
@@ -1031,7 +1031,7 @@ fn secondary_button(text: impl Into<String>, palette: ThemePalette) -> egui::But
             .strong(),
     )
     .fill(palette.row)
-    .stroke(egui::Stroke::new(1.0, palette.border))
+    .stroke(egui::Stroke::new(1.0_f32, palette.border))
     .rounding(egui::Rounding::same(8.0))
 }
 
@@ -1043,7 +1043,7 @@ fn primary_button(text: impl Into<String>, palette: ThemePalette) -> egui::Butto
             .strong(),
     )
     .fill(fill)
-    .stroke(egui::Stroke::new(1.0, fill))
+    .stroke(egui::Stroke::new(1.0_f32, fill))
     .rounding(egui::Rounding::same(8.0))
 }
 
@@ -1081,18 +1081,18 @@ fn render_singleline_input(
         let widgets = &mut ui.style_mut().visuals.widgets;
         widgets.inactive.bg_fill = input_fill;
         widgets.inactive.weak_bg_fill = input_fill;
-        widgets.inactive.bg_stroke = egui::Stroke::new(1.0, idle_stroke);
+        widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, idle_stroke);
         widgets.inactive.rounding = egui::Rounding::same(8.0);
 
         widgets.hovered = widgets.inactive;
         widgets.hovered.bg_fill = hover_fill;
         widgets.hovered.weak_bg_fill = hover_fill;
-        widgets.hovered.bg_stroke = egui::Stroke::new(1.0, hover_stroke);
+        widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, hover_stroke);
 
         widgets.active = widgets.hovered;
         widgets.active.bg_fill = input_fill;
         widgets.active.weak_bg_fill = input_fill;
-        widgets.active.bg_stroke = egui::Stroke::new(1.25, palette.accent);
+        widgets.active.bg_stroke = egui::Stroke::new(1.25_f32, palette.accent);
         widgets.open = widgets.active;
 
         ui.add(
@@ -1121,7 +1121,7 @@ fn render_segmented_choice(
     let selected_stroke = palette.accent.gamma_multiply(0.62);
     egui::Frame::none()
         .fill(palette.soft)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+        .stroke(egui::Stroke::new(1.0_f32, palette.border))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::same(4.0))
         .show(ui, |ui| {
@@ -1143,7 +1143,7 @@ fn render_segmented_choice(
                         egui::Color32::TRANSPARENT
                     })
                     .stroke(egui::Stroke::new(
-                        1.0,
+                        1.0_f32,
                         if is_selected {
                             selected_stroke
                         } else {
@@ -1177,7 +1177,7 @@ fn render_segmented_tab_bar(
     let selected_stroke = palette.accent.gamma_multiply(0.62);
     egui::Frame::none()
         .fill(palette.soft)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+        .stroke(egui::Stroke::new(1.0_f32, palette.border))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::same(3.0))
         .show(ui, |ui| {
@@ -1199,7 +1199,7 @@ fn render_segmented_tab_bar(
                     egui::Color32::TRANSPARENT
                 })
                 .stroke(egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     if task_selected {
                         selected_stroke
                     } else {
@@ -1229,7 +1229,7 @@ fn render_segmented_tab_bar(
                     egui::Color32::TRANSPARENT
                 })
                 .stroke(egui::Stroke::new(
-                    1.0,
+                    1.0_f32,
                     if history_selected {
                         selected_stroke
                     } else {
@@ -1260,7 +1260,7 @@ fn render_settings_tab_bar(
     let selected_stroke = palette.accent.gamma_multiply(0.62);
     egui::Frame::none()
         .fill(palette.soft)
-        .stroke(egui::Stroke::new(1.0, palette.border))
+        .stroke(egui::Stroke::new(1.0_f32, palette.border))
         .rounding(egui::Rounding::same(8.0))
         .inner_margin(egui::Margin::same(3.0))
         .show(ui, |ui| {
@@ -1283,7 +1283,7 @@ fn render_settings_tab_bar(
                         egui::Color32::TRANSPARENT
                     })
                     .stroke(egui::Stroke::new(
-                        1.0,
+                        1.0_f32,
                         if is_selected {
                             selected_stroke
                         } else {
@@ -1306,7 +1306,7 @@ fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemeP
     let mut changed = false;
     egui::Frame::none()
         .fill(egui::Color32::TRANSPARENT)
-        .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+        .stroke(egui::Stroke::new(0.0_f32, egui::Color32::TRANSPARENT))
         .inner_margin(egui::Margin::symmetric(0.0, 1.0))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -1333,7 +1333,7 @@ fn render_page_tab_bar(ui: &mut egui::Ui, selected: &mut AppTab, palette: ThemeP
                         palette.row
                     })
                     .stroke(egui::Stroke::new(
-                        1.0,
+                        1.0_f32,
                         if is_selected {
                             palette.accent.gamma_multiply(0.86)
                         } else {
@@ -1381,15 +1381,15 @@ fn build_theme_style(theme: egui::Theme, accent: AccentColor) -> egui::Style {
         spread: 0.0,
         color: palette.shadow.gamma_multiply(0.8),
     };
-    style.visuals.window_stroke = egui::Stroke::new(1.0, palette.border);
+    style.visuals.window_stroke = egui::Stroke::new(1.0_f32, palette.border);
     style.visuals.selection.bg_fill = palette.accent;
-    style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
     style.visuals.button_frame = true;
     style.visuals.widgets.noninteractive.rounding = egui::Rounding::same(8.0);
     style.visuals.widgets.noninteractive.bg_fill = palette.card;
     style.visuals.widgets.noninteractive.weak_bg_fill = palette.soft;
-    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, palette.border);
-    style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, palette.text);
+    style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, palette.border);
+    style.visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, palette.text);
 
     style.visuals.widgets.inactive = style.visuals.widgets.noninteractive;
     style.visuals.widgets.inactive.bg_fill = palette.row;
@@ -1399,7 +1399,7 @@ fn build_theme_style(theme: egui::Theme, accent: AccentColor) -> egui::Style {
     style.visuals.widgets.hovered.bg_fill = palette.row;
     style.visuals.widgets.hovered.weak_bg_fill = palette.row;
     style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(
-        1.0,
+        1.0_f32,
         egui::Color32::from_rgba_unmultiplied(
             palette.accent.r(),
             palette.accent.g(),
@@ -1411,8 +1411,8 @@ fn build_theme_style(theme: egui::Theme, accent: AccentColor) -> egui::Style {
     style.visuals.widgets.active = style.visuals.widgets.hovered;
     style.visuals.widgets.active.bg_fill = palette.accent;
     style.visuals.widgets.active.weak_bg_fill = palette.accent;
-    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, palette.accent);
-    style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0_f32, palette.accent);
+    style.visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
     style.visuals.widgets.open = style.visuals.widgets.hovered;
 
     style.text_styles.insert(
@@ -1479,7 +1479,7 @@ fn paint_background(ctx: &egui::Context, palette: ThemePalette) {
             egui::pos2(rect.left(), rect.top() + top_band_height),
             egui::pos2(rect.right(), rect.top() + top_band_height),
         ],
-        egui::Stroke::new(1.0, palette.border),
+        egui::Stroke::new(1.0_f32, palette.border),
     );
 }
 
@@ -1768,6 +1768,8 @@ impl AppTab {
 
 // ── 应用状态 ─────────────────────────────────────────────
 struct AppState {
+    #[cfg(target_os = "macos")]
+    startup_frame_pending: bool,
     config: Config,
     shared_config: Arc<Mutex<Config>>,
     last_url: Option<String>,
@@ -2088,6 +2090,47 @@ impl AppState {
 
     fn render_config_panel(&mut self, ui: &mut egui::Ui, palette: ThemePalette) {
         render_panel_header(ui, "配置", "网络参数、响应解析和自动化偏好。", palette);
+        #[cfg(target_os = "macos")]
+        soft_card_frame(palette).show(ui, |ui| {
+            // Read the OS state, including changes made outside the app. Never auto-register
+            // from a saved preference: disabling the item in System Settings must be respected.
+            let state = macos::login_status();
+            let mut enabled = state == 1;
+            let description = match state {
+                0 => "登录桌面后自动在菜单栏运行，不弹出主窗口。",
+                1 => "已启用；登录桌面后自动在菜单栏运行。",
+                2 => "需要在系统设置的登录项中允许此应用。",
+                3 => "系统未找到登录项，请重新安装应用后再试。",
+                -2 => "请使用 DMG 安装的应用；命令行调试版本不支持此设置。",
+                -3 => "请先将应用拖入“应用程序”，再从那里打开。",
+                _ => "登录自启动需要 macOS 13 或更新版本。",
+            };
+            render_setting_row(ui, "登录时自动启动", description, palette, |ui| {
+                ui.add_enabled_ui(state >= 0 && state != 3, |ui| {
+                    if apple_toggle_switch(ui, &mut enabled).changed() {
+                        if state == 2 && enabled {
+                            macos::open_login_settings();
+                        } else if let Err(error) = macos::set_login(enabled) {
+                            self.set_status_sticky(true, format!("设置登录项失败：{error}"));
+                        }
+                    }
+                });
+            });
+            if state == 2 {
+                ui.horizontal(|ui| {
+                    if ui.button("打开系统登录项设置").clicked() {
+                        macos::open_login_settings();
+                    }
+                    if ui.button("取消自动启动").clicked() {
+                        if let Err(error) = macos::set_login(false) {
+                            self.set_status_sticky(true, format!("取消登录项失败：{error}"));
+                        }
+                    }
+                });
+            }
+            ui.ctx().request_repaint_after(Duration::from_secs(2));
+        });
+
         ui.add_space(8.0);
 
         soft_card_frame(palette).show(ui, |ui| {
@@ -2553,7 +2596,7 @@ impl AppState {
                                 egui::Rounding::same(8.0),
                                 fill,
                                 egui::Stroke::new(
-                                    if is_selected { 1.5 } else { 1.0 },
+                                    if is_selected { 1.5_f32 } else { 1.0_f32 },
                                     if is_selected {
                                         candidate_color
                                     } else {
@@ -2567,7 +2610,7 @@ impl AppState {
                                 ui.painter().circle_stroke(
                                     rect.center(),
                                     12.0,
-                                    egui::Stroke::new(2.0, egui::Color32::WHITE),
+                                    egui::Stroke::new(2.0_f32, egui::Color32::WHITE),
                                 );
                             }
                             if response.clicked() && !is_selected {
@@ -2706,7 +2749,7 @@ impl AppState {
 
             egui::Frame::none()
                 .fill(palette.soft)
-                .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+                .stroke(egui::Stroke::new(0.0_f32, egui::Color32::TRANSPARENT))
                 .rounding(egui::Rounding::same(8.0))
                 .inner_margin(egui::Margin::symmetric(8.0, 6.0))
                 .show(ui, |ui| {
@@ -2845,7 +2888,7 @@ impl AppState {
 
                 egui::Frame::none()
                     .fill(palette.row)
-                    .stroke(egui::Stroke::new(0.0, egui::Color32::TRANSPARENT))
+                    .stroke(egui::Stroke::new(0.0_f32, egui::Color32::TRANSPARENT))
                     .rounding(egui::Rounding::same(8.0))
                     .inner_margin(egui::Margin::same(10.0))
                     .show(ui, |ui| {
@@ -3151,7 +3194,7 @@ impl AppState {
 
                             egui::Frame::none()
                                 .fill(card_fill)
-                                .stroke(egui::Stroke::new(1.0, card_stroke))
+                                .stroke(egui::Stroke::new(1.0_f32, card_stroke))
                                 .rounding(egui::Rounding::same(8.0))
                                 .inner_margin(egui::Margin::same(14.0))
                                 .show(ui, |ui| {
@@ -3312,7 +3355,7 @@ impl AppState {
                         for record in &self.history {
                             egui::Frame::none()
                                 .fill(palette.row)
-                                .stroke(egui::Stroke::new(1.0, palette.border))
+                                .stroke(egui::Stroke::new(1.0_f32, palette.border))
                                 .rounding(egui::Rounding::same(8.0))
                                 .inner_margin(egui::Margin::same(14.0))
                                 .show(ui, |ui| {
@@ -3452,6 +3495,14 @@ impl AppState {
 
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if macos::take_show_request() {
+            show_main_window(ctx);
+        }
+        #[cfg(target_os = "macos")]
+        if std::mem::take(&mut self.startup_frame_pending) {
+            macos::finish_first_frame();
+        }
         // 检查状态提示是否已过期
         if let Some(clear_at) = self.status_clear_at {
             if Instant::now() >= clear_at {
@@ -3568,7 +3619,7 @@ impl eframe::App for AppState {
         if ctx.input(|i| i.viewport().close_requested()) {
             if self.quit_requested {
                 // 来自托盘菜单"退出"，允许真正关闭
-            } else if self.config.close_to_tray.unwrap_or(true) {
+            } else if self.tray_handles.is_some() && self.config.close_to_tray.unwrap_or(true) {
                 // 拦截关闭，保留窗口以便后续从托盘或 Dock 恢复
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 hide_main_window_to_background(ctx);
@@ -3717,6 +3768,50 @@ impl eframe::App for AppState {
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    let _instance_guard = {
+        if std::env::args().any(|arg| arg == "--macos-smoke-test") {
+            assert!(macos::is_bundle(), "Expected an installed app bundle");
+            assert!(
+                macos::login_status() >= 0,
+                "Login service must be queryable"
+            );
+            if std::env::var("MACOS_TEST_LOGIN_ITEM").as_deref() == Ok("1") {
+                assert_eq!(macos::login_status(), 0, "Test requires a fresh login item");
+                let registration = macos::set_login(true);
+                let state = macos::login_status();
+                // Always attempt cleanup before asserting, including a partial registration.
+                let cleanup = macos::set_login(false);
+                registration.expect("Registering the signed app as a login item failed");
+                cleanup.expect("Removing the test login item failed");
+                assert!(
+                    state == 1 || state == 2,
+                    "Unexpected registered status: {state}"
+                );
+                assert_eq!(macos::login_status(), 0, "Login item cleanup failed");
+            }
+            println!("macOS bundle and login service smoke test passed");
+            return;
+        }
+        let result = data_dir()
+            .ok_or_else(|| anyhow::anyhow!("无法确定应用数据目录"))
+            .and_then(macos::acquire_instance);
+        match result {
+            Ok(Some(guard)) => guard,
+            Ok(None) => return,
+            Err(error) => {
+                macos::show_error(&error.to_string());
+                return;
+            }
+        }
+    };
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(error) = macos::init_logging() {
+            eprintln!("无法初始化日志：{error}");
+        }
+        macos::install_events();
+    }
     let loaded_config = load_config();
     let cfg = loaded_config.config;
     let config_load_error = loaded_config.load_error;
@@ -3736,6 +3831,8 @@ fn main() {
                         thread::spawn(move || loop {
                             if let Ok(_event) = GlobalHotKeyEvent::receiver().recv() {
                                 let _ = tx2.send(AppEvent::TrayUpload);
+                                #[cfg(target_os = "macos")]
+                                macos::wake_ui();
                             }
                         });
                     }
@@ -3763,6 +3860,10 @@ fn main() {
     }
 
     let has_tray = tray_icon.is_some();
+    #[cfg(target_os = "macos")]
+    if !has_tray {
+        macos::use_regular_policy();
+    }
     if has_tray {
         let tx3 = tx.clone();
         thread::spawn(move || loop {
@@ -3794,6 +3895,8 @@ fn main() {
                     continue;
                 };
                 let _ = tx3.send(evt);
+                #[cfg(target_os = "macos")]
+                macos::wake_ui();
             }
         });
     }
@@ -3804,6 +3907,8 @@ fn main() {
     #[cfg(target_os = "macos")]
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_visible(!has_tray || !macos::is_bundle())
+            .with_active(false)
             .with_inner_size([900.0, 820.0])
             .with_min_inner_size([720.0, 620.0])
             .with_title("剪贴板上传工具"),
@@ -3821,6 +3926,7 @@ fn main() {
     if has_tray {
         options.event_loop_builder = Some(Box::new(|builder| {
             builder.with_activation_policy(ActivationPolicy::Accessory);
+            builder.with_activate_ignoring_other_apps(false);
         }));
     }
 
@@ -3843,6 +3949,13 @@ fn main() {
         "剪贴板上传工具",
         options,
         Box::new(move |cc| {
+            #[cfg(target_os = "macos")]
+            {
+                if has_tray && macos::is_bundle() {
+                    macos::prepare_window();
+                }
+                macos::attach_context(&cc.egui_ctx);
+            }
             setup_fonts(&cc.egui_ctx);
             let _ = apply_theme(
                 &cc.egui_ctx,
@@ -3857,6 +3970,8 @@ fn main() {
             };
             let initial_status = config_load_error.as_ref().map(|msg| (true, msg.clone()));
             let app = AppState {
+                #[cfg(target_os = "macos")]
+                startup_frame_pending: has_tray && macos::is_bundle(),
                 config: cfg,
                 shared_config: Arc::clone(&shared_for_app),
                 last_url: None,
@@ -3886,6 +4001,8 @@ fn main() {
         }),
     ) {
         eprintln!("启动失败: {e}");
+        #[cfg(target_os = "macos")]
+        macos::show_error(&format!("启动失败：{e}"));
         std::process::exit(1);
     }
 

@@ -5,8 +5,8 @@
 一个跨平台（Windows / macOS / Linux）的剪贴板图片上传工具。用户截图后，通过 GUI 或全局热键一键将剪贴板中的图片上传到图床，并自动获取链接。
 
 - **技术栈**：Rust + egui (eframe) + reqwest + rusqlite + arboard
-- **当前版本**：`Cargo.toml` 中的 `version` 字段（目前 0.5.0）
-- **代码结构**：单文件 `src/main.rs`，所有逻辑在此文件中
+- **当前版本**：`Cargo.toml` 中的 `version` 字段（目前 1.0.7）
+- **代码结构**：业务和界面在 `src/main.rs`；macOS 登录项、单实例和生命周期在 `src/macos.rs` 与 `native/macos.m`。
 
 ---
 
@@ -118,16 +118,19 @@ headers:                        # 可选自定义请求头
 
 ## CI / Release
 
-- 触发条件：推送 `v*` tag 或手动触发 `workflow_dispatch`
-- 构建矩阵：`ubuntu-latest` / `macos-latest` / `windows-latest`
-- 产物命名：`rust-clipboard-uploader-linux` / `-macos` / `-windows.exe`
+- 触发条件：推送 master、`v*` tag 或手动触发 `workflow_dispatch`；master 上新版本号自动发布，已有 tag 的版本仅检查。
+- 构建矩阵：Linux / macOS arm64 / macOS Intel / Windows。
+- macOS 产物：`RustClipboardUploader-<版本>-macos-<arm64|x86_64>.dmg`；其他平台保持二进制。
+- 提交 `Cargo.lock`，CI 使用 `--locked`；macOS 最低 13.0。
+- 打包脚本：`scripts/package-macos.sh`；签名和公证 Secrets 见 README。
 - Release 由 `softprops/action-gh-release@v2` 自动创建
 
 发布流程：
 ```bash
 # 更新 Cargo.toml 中的 version
+cargo check
 git add -A && git commit -m "chore: bump version to vX.Y.Z"
-git tag vX.Y.Z && git push origin master --tags
+git push origin master
 ```
 
 ---

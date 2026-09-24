@@ -38,10 +38,24 @@
 前往 [Releases](../../releases) 下载对应平台的二进制文件：
 
 - `rust-clipboard-uploader-linux`
-- `rust-clipboard-uploader-macos`
+- `RustClipboardUploader-<版本>-macos-arm64.dmg`（Apple Silicon）
+- `RustClipboardUploader-<版本>-macos-x86_64.dmg`（Intel）
 - `rust-clipboard-uploader-windows.exe`
 
-下载后直接运行即可。
+Windows / Linux 下载后运行对应二进制。macOS 要求 **13.0 或更新版本**：
+
+1. 打开对应芯片架构的 DMG。
+2. 将 `RustClipboardUploader.app` 拖到“应用程序”，推出磁盘映像。
+3. 从“应用程序”或 Spotlight 打开，无需终端。
+4. 在 **设置 → 配置 → 登录时自动启动** 中启用登录项。
+
+登录自启动后仅常驻菜单栏；再次打开应用或点击菜单栏“显示窗口”会恢复已有窗口。关闭窗口继续后台运行，菜单栏“退出”才结束进程。重复启动不会创建多个剪贴板监听实例。
+
+开关读取 macOS 实际登录项状态。在系统设置中禁用后，应用不会自行重新注册；需要批准时，可从应用跳转到系统登录项设置。不要从 DMG 内启用自启动。
+
+每次 Release 会列出实际签名与公证状态。未配置开发者证书的构建使用 ad-hoc 签名，**不代表通过 Apple 公证**。如果首次打开被系统阻止，在确认下载来自本仓库后，可前往“系统设置 → 隐私与安全性 → 仍要打开”；无需关闭 Gatekeeper。
+
+升级时先退出旧版本，再将新应用覆盖到“应用程序”。旧的 `config.yaml` 和 `history.db` 目录保持不变。卸载前关闭“登录时自动启动”，退出应用后将 `.app` 移到废纸篓。后台错误日志保存在 `~/Library/Logs/RustClipboardUploader/app.log`。
 
 ### 从源码运行
 
@@ -264,25 +278,39 @@ cargo run
 
 触发方式：
 
-- 推送 `v*` tag，例如 `v0.5.3`
-- 手动触发 `workflow_dispatch`
+- 推送主分支：执行完整构建；如果 `Cargo.toml` 版本对应的 tag 尚不存在，全部检查通过后自动创建 tag 和 Release。
+- 推送 `v*` tag：版本必须与 `Cargo.toml` 一致，构建后发布。
+- 手动触发 `workflow_dispatch`：默认仅构建，勾选 `release` 才发布。
 
-发布流程会自动：
+编译依赖通过提交的 `Cargo.lock` 固定，CI 使用 `--locked`。macOS 分别在原生 arm64 和 Intel runner 构建，验证原生启动事件、应用包、签名与 DMG 完整性，并附带 SHA-256 校验文件。
 
-- 构建 `ubuntu-latest`
-- 构建 `macos-latest`
-- 构建 `windows-latest`
-- 上传三平台构建产物
-- 创建 GitHub Release
-
-常用发布命令：
+本地 macOS 打包：
 
 ```bash
-git add -A
-git commit -m "chore: release vX.Y.Z"
-git tag vX.Y.Z
-git push origin master --tags
+export MACOSX_DEPLOYMENT_TARGET=13.0
+rustup target add aarch64-apple-darwin
+cargo build --locked --release --target aarch64-apple-darwin
+bash scripts/package-macos.sh aarch64-apple-darwin
 ```
+
+Intel Mac 将目标替换为 `x86_64-apple-darwin`。脚本会执行目标二进制做 smoke test，因此建议在对应架构的 Mac 上构建。
+
+可选的 GitHub Actions Secrets：
+
+| Secret | 用途 |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | Developer ID Application 证书及私钥的 P12 文件，Base64 编码 |
+| `MACOS_CERTIFICATE_PASSWORD` | P12 密码 |
+| `MACOS_SIGNING_IDENTITY` | 完整的 Developer ID Application 签名身份 |
+| `APPLE_ID` | 公证用 Apple ID |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+| `APPLE_APP_PASSWORD` | Apple 应用专用密码 |
+
+证书齐备时自动签名；公证凭据也齐备时，自动提交公证并为 `.app` 和 `.dmg` staple。未配置时生成 ad-hoc 签名 DMG，并在 Release 中明确标注。签名或公证步骤配置后失败会阻止发布，不会悄悄降级。
+
+发布下一版时，更新 `Cargo.toml`，运行 `cargo check` 同步 `Cargo.lock`，然后提交并推送主分支即可。**无需先手动创建 tag。**
+
+macOS 手工验收：安装后手动打开、关闭并恢复窗口、重复打开、启用自启动并注销/登录、在系统设置中禁用、覆盖升级后保留配置和历史。CI 验证不替代真实用户会话的登录验收。
 
 ## 许可
 
