@@ -2100,13 +2100,13 @@ impl AppState {
                 0 => "登录桌面后自动在菜单栏运行，不弹出主窗口。",
                 1 => "已启用；登录桌面后自动在菜单栏运行。",
                 2 => "需要在系统设置的登录项中允许此应用。",
-                3 => "系统未找到登录项，请重新安装应用后再试。",
+                3 => "登录项尚未注册；开启后将在系统设置中显示。",
                 -2 => "请使用 DMG 安装的应用；命令行调试版本不支持此设置。",
                 -3 => "请先将应用拖入“应用程序”，再从那里打开。",
                 _ => "登录自启动需要 macOS 13 或更新版本。",
             };
             render_setting_row(ui, "登录时自动启动", description, palette, |ui| {
-                ui.add_enabled_ui(state >= 0 && state != 3, |ui| {
+                ui.add_enabled_ui(state >= 0, |ui| {
                     if apple_toggle_switch(ui, &mut enabled).changed() {
                         if state == 2 && enabled {
                             macos::open_login_settings();
@@ -3777,7 +3777,10 @@ fn main() {
                 "Login service must be queryable"
             );
             if std::env::var("MACOS_TEST_LOGIN_ITEM").as_deref() == Ok("1") {
-                assert_eq!(macos::login_status(), 0, "Test requires a fresh login item");
+                assert!(
+                    matches!(macos::login_status(), 0 | 3),
+                    "Test requires an unregistered login item"
+                );
                 let registration = macos::set_login(true);
                 let state = macos::login_status();
                 // Always attempt cleanup before asserting, including a partial registration.
@@ -3788,7 +3791,10 @@ fn main() {
                     state == 1 || state == 2,
                     "Unexpected registered status: {state}"
                 );
-                assert_eq!(macos::login_status(), 0, "Login item cleanup failed");
+                assert!(
+                    matches!(macos::login_status(), 0 | 3),
+                    "Login item cleanup failed"
+                );
             }
             println!("macOS bundle and login service smoke test passed");
             return;
