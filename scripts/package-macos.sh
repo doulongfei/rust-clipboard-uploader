@@ -17,7 +17,12 @@ binary="target/$target/release/rust-clipboard-uploader"
 [[ -x "$binary" ]] || { echo "Build $target first" >&2; exit 1; }
 mkdir -p dist
 work=$(mktemp -d "${TMPDIR:-/tmp}/rcu-package.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+smoke_app=
+cleanup() {
+    if [[ -n "$smoke_app" ]]; then rm -rf "$smoke_app"; fi
+    rm -rf "$work"
+}
+trap cleanup EXIT
 app="$work/image/RustClipboardUploader.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/rust-clipboard-uploader"
@@ -36,7 +41,24 @@ else
 fi
 codesign "${sign_flags[@]}" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
-"$app/Contents/MacOS/rust-clipboard-uploader" --macos-smoke-test
+if [[ "${MACOS_TEST_LOGIN_ITEM:-}" == 1 ]]; then
+    # SMAppService requires an app registered with Launch Services. A bundle
+    # inside a temporary disk-image staging directory reports NotFound.
+    mkdir -p "$HOME/Applications"
+    smoke_app="$HOME/Applications/RustClipboardUploader.app"
+    if [[ -e "$smoke_app" ]]; then
+        echo "Refusing to replace an existing application: $smoke_app" >&2
+        smoke_app=
+        exit 1
+    fi
+    ditto "$app" "$smoke_app"
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$smoke_app"
+    "$smoke_app/Contents/MacOS/rust-clipboard-uploader" --macos-smoke-test
+    rm -rf "$smoke_app"
+    smoke_app=
+else
+    "$app/Contents/MacOS/rust-clipboard-uploader" --macos-smoke-test
+fi
 
 notary_args=(--keychain-profile "${MACOS_NOTARY_PROFILE:-}")
 if [[ -n "${MACOS_NOTARY_KEYCHAIN:-}" ]]; then
